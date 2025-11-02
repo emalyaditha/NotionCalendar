@@ -701,6 +701,81 @@ def delete_calendar_event(service, event_id: str):
         logger.error(f"Error deleting calendar event {event_id}: {str(e)}", exc_info=True)
         raise
 
+def delete_all_calendar_events(service):
+    """Delete all events from the Google Calendar."""
+    try:
+        # Get all events from the calendar
+        logger.info("Fetching all events from calendar...")
+        events_result = service.events().list(calendarId=GOOGLE_CALENDAR_ID, maxResults=2500).execute()
+        events = events_result.get('items', [])
+        
+        logger.info(f"Found {len(events)} events to delete")
+        
+        # Delete each event
+        deleted_count = 0
+        for event in events:
+            try:
+                event_id = event['id']
+                service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
+                deleted_count += 1
+                if deleted_count % 50 == 0:  # Log progress every 50 deletions
+                    logger.info(f"Deleted {deleted_count} events so far...")
+            except HttpError as e:
+                event_id = event.get('id', 'unknown')
+                if e.resp.status == 404:
+                    # Event already deleted
+                    pass
+                else:
+                    logger.error(f"HttpError deleting event {event_id}: {str(e)}")
+            except Exception as e:
+                event_id = event.get('id', 'unknown')
+                logger.error(f"Error deleting event {event_id}: {str(e)}")
+        
+        logger.info(f"Successfully deleted {deleted_count} events from calendar")
+        return deleted_count
+        
+    except Exception as e:
+        logger.error(f"Error fetching or deleting events: {str(e)}", exc_info=True)
+        raise
+
+@app.post("/clear-calendar", tags=["Calendar Management"])
+def clear_calendar():
+    """
+    Delete all events from the Google Calendar.
+    This will remove all events from the specified calendar.
+    """
+    try:
+        logger.info("Starting calendar clear operation...")
+        logger.info("Connecting to Google Calendar API...")
+        
+        # Get Google Calendar service
+        service = get_google_calendar_service()
+        logger.info("Google Calendar API connection established")
+        
+        # Delete all events
+        deleted_count = delete_all_calendar_events(service)
+        
+        # Clear the sync mapping file
+        logger.info("Clearing sync mapping file...")
+        save_sync_mapping({})
+        logger.info("Sync mapping file cleared")
+        
+        result = {
+            "status": "success",
+            "deleted": deleted_count,
+            "message": f"Successfully deleted {deleted_count} events from calendar"
+        }
+        
+        logger.info(f"Calendar clear operation completed! Deleted {deleted_count} events.")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Internal server error during calendar clear: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
 @app.post("/sync-calendar", tags=["Calendar Sync"])
 def sync_calendar():
     """
@@ -890,6 +965,8 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
 
 
 
