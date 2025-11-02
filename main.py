@@ -374,47 +374,29 @@ def parse_notion_date(date_str: str):
     if not date_str:
         return None, None
     
-    # Handle datetime format (contains T)
-    if 'T' in date_str:
-        # Handle timezone formats: Z, +HH:MM, -HH:MM
-        cleaned = date_str.replace('Z', '+00:00')
-        # Try parsing with timezone first
-        try:
-            dt = datetime.fromisoformat(cleaned)
-            return dt, 'dateTime'
-        except:
-            # If timezone parsing fails, try without timezone
-            # Remove timezone offset (everything after + or last -)
-            if '+' in cleaned:
-                date_time_part = cleaned.split('+')[0]
-            elif cleaned.rfind('-') > 10:  # Has timezone offset (more than date part)
-                # Find the last - that starts timezone
-                parts = cleaned.rsplit('-', 3)
-                if len(parts) >= 3:
-                    date_time_part = '-'.join(parts[:-2])  # Remove timezone part
-                else:
-                    date_time_part = cleaned.split('-')[0]
-            else:
-                date_time_part = cleaned
-            
-            try:
-                dt = datetime.fromisoformat(date_time_part)
-                return dt, 'dateTime'
-            except:
-                logger.warning(f"Error parsing datetime '{date_str}': Could not parse")
-                return None, None
-    else:
-        # Date only format (YYYY-MM-DD)
+    # For all-day events, we only care about the date part, not time
+    # Check if it's a date-only format (YYYY-MM-DD)
+    if 'T' not in date_str:
         try:
             dt = datetime.strptime(date_str, '%Y-%m-%d')
-            return dt, 'date'
+            return dt, 'date'  # Always treat as date for all-day events
         except:
             try:
                 dt = datetime.fromisoformat(date_str)
-                return dt, 'date'
+                return dt, 'date'  # Always treat as date for all-day events
             except:
                 logger.warning(f"Error parsing date '{date_str}': Could not parse")
                 return None, None
+    else:
+        # Even if it contains time, we'll treat it as an all-day event
+        # Extract just the date part
+        date_part = date_str.split('T')[0]
+        try:
+            dt = datetime.strptime(date_part, '%Y-%m-%d')
+            return dt, 'date'  # Always treat as date for all-day events
+        except:
+            logger.warning(f"Error parsing datetime '{date_str}': Could not parse")
+            return None, None
 
 def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[str]:
     """Create a calendar event from Notion item and return event ID."""
@@ -431,8 +413,8 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
             logger.warning(f"Error parsing start date for '{item.get('Project_name')}': {start_date_str}")
             return None
         
-        # Determine format - prefer dateTime if either is datetime
-        time_format = 'dateTime' if start_format == 'dateTime' else 'date'
+        # For all-day events, we always use 'date' format
+        time_format = 'date'
         
         # Parse end date
         if item.get("End_date"):
@@ -440,28 +422,19 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
             end_dt, end_format = parse_notion_date(end_date_str or "")
             
             if end_dt is None:
-                # If end date parsing fails, default to start + 1 day
-                end_dt = start_dt + timedelta(days=1)
-                end_format = start_format
-            else:
-                # Use datetime format if either is datetime
-                if end_format == 'dateTime':
-                    time_format = 'dateTime'
-                # For date-only end dates, add 1 day to include the full day
-                if end_format == 'date':
-                    end_dt = end_dt + timedelta(days=1)
+                # If end date parsing fails, default to start date (same day)
+                end_dt = start_dt
         else:
-            # No end date, use start + 1 day
-            end_dt = start_dt + timedelta(days=1)
-            end_format = start_format
+            # No end date, use start date (same day)
+            end_dt = start_dt
         
-        # Format dates for Google Calendar API
-        if time_format == 'dateTime':
-            start_time = start_dt.isoformat()
-            end_time = end_dt.isoformat()
-        else:
-            start_time = start_dt.strftime('%Y-%m-%d')
-            end_time = end_dt.strftime('%Y-%m-%d')
+        # For all-day events, we need to add one day to the end date
+        # Google Calendar all-day events end date is exclusive
+        end_dt = end_dt + timedelta(days=1)
+        
+        # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
+        start_time = start_dt.strftime('%Y-%m-%d')
+        end_time = end_dt.strftime('%Y-%m-%d')
         
         # Build event description
         description_parts = []
@@ -513,8 +486,8 @@ def update_calendar_event(service, event_id: str, item: Dict):
             logger.warning(f"Error parsing start date for update '{item.get('Project_name')}': {start_date_str}")
             return
         
-        # Determine format
-        time_format = 'dateTime' if start_format == 'dateTime' else 'date'
+        # For all-day events, we always use 'date' format
+        time_format = 'date'
         
         # Parse end date
         if item.get("End_date"):
@@ -522,24 +495,17 @@ def update_calendar_event(service, event_id: str, item: Dict):
             end_dt, end_format = parse_notion_date(end_date_str or "")
             
             if end_dt is None:
-                end_dt = start_dt + timedelta(days=1)
-                end_format = start_format
-            else:
-                if end_format == 'dateTime':
-                    time_format = 'dateTime'
-                if end_format == 'date':
-                    end_dt = end_dt + timedelta(days=1)
+                end_dt = start_dt
         else:
-            end_dt = start_dt + timedelta(days=1)
-            end_format = start_format
+            end_dt = start_dt
         
-        # Format dates for Google Calendar API
-        if time_format == 'dateTime':
-            start_time = start_dt.isoformat()
-            end_time = end_dt.isoformat()
-        else:
-            start_time = start_dt.strftime('%Y-%m-%d')
-            end_time = end_dt.strftime('%Y-%m-%d')
+        # For all-day events, we need to add one day to the end date
+        # Google Calendar all-day events end date is exclusive
+        end_dt = end_dt + timedelta(days=1)
+        
+        # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
+        start_time = start_dt.strftime('%Y-%m-%d')
+        end_time = end_dt.strftime('%Y-%m-%d')
         
         # Build description
         description_parts = []
@@ -759,3 +725,6 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
+
