@@ -124,9 +124,9 @@ async def auto_sync_task():
             logger.error(f"   Error: {e}")
             logger.exception("   Details:")
         
-        # Wait for 30 minutes before next sync
-        logger.info("Next sync in 30 minutes...")
-        await asyncio.sleep(1800)
+        # Wait for 10 seconds before next sync (for testing)
+        logger.info("Next sync in 10 seconds...")
+        await asyncio.sleep(10)
 
 # Register startup event
 @app.on_event("startup")
@@ -147,7 +147,7 @@ async def startup_event():
     asyncio.create_task(auto_sync_task())
     
     logger.info("Application started successfully!")
-    logger.info("Automatic sync task scheduled (30-minute intervals)")
+    logger.info("Automatic sync task scheduled (10-second intervals for testing)")
     logger.info("=" * 60)
 
 # Configuration - using environment variables for security
@@ -965,6 +965,10 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
+
+
 
 
 
