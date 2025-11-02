@@ -44,7 +44,7 @@ class CleanFormatter(logging.Formatter):
         # Get timestamp
         timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
         
-        # For ERROR and CRITICAL levels, write to error log file
+        # For ERROR and CRITICAL levels, write to error log file only
         if record.levelno >= logging.ERROR:
             error_msg = f"[{timestamp}] {record.levelname} | {record.getMessage()}\n"
             if record.exc_info:
@@ -56,18 +56,15 @@ class CleanFormatter(logging.Formatter):
                     f.write(error_msg)
             except:
                 pass  # If we can't write to file, continue anyway
+            
+            # Return empty string to prevent output to terminal
+            return ""
         
         # Format for terminal output (only show INFO and WARNING in terminal)
-        if record.levelno < logging.ERROR:
-            level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
-            level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
-            formatted_message = f"[{timestamp}] {level_name} | {record.getMessage()}"
-            return formatted_message
-        else:
-            # For errors, show a simplified message in terminal
-            level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
-            level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
-            return f"[{timestamp}] {level_name} | Error occurred (details in {ERROR_LOG_FILE})"
+        level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
+        level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
+        formatted_message = f"[{timestamp}] {level_name} | {record.getMessage()}"
+        return formatted_message
 
 # Configure logging with clean formatter
 logging.basicConfig(level=logging.INFO, handlers=[logging.FileHandler("sync.log")])
@@ -75,8 +72,17 @@ logger = logging.getLogger(__name__)
 
 # Create console handler with clean formatter
 console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(CleanFormatter())
 logger.addHandler(console_handler)
+
+# Filter out ERROR and CRITICAL logs from console
+class ConsoleFilter(logging.Filter):
+    def filter(self, record):
+        # Only allow INFO and WARNING levels to console
+        return record.levelno < logging.ERROR
+
+console_handler.addFilter(ConsoleFilter())
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -816,6 +822,8 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
 
 
 
