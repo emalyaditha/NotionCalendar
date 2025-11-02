@@ -103,29 +103,29 @@ async def auto_sync_task():
     while auto_sync_enabled:
         try:
             logger.info("=" * 60)
-            logger.info("🔄 AUTOMATIC CALENDAR SYNC STARTED")
+            logger.info("AUTOMATIC CALENDAR SYNC STARTED")
             logger.info("=" * 60)
             
             # Call the sync_calendar function
             result = sync_calendar()
             
-            logger.info("✅ SYNC COMPLETED SUCCESSFULLY")
+            logger.info("SYNC COMPLETED SUCCESSFULLY")
             logger.info("-" * 40)
-            logger.info(f"📊 Projects Processed:")
-            logger.info(f"   ➤ Created:  {result.get('created', 0):>3}")
-            logger.info(f"   ➤ Updated:  {result.get('updated', 0):>3}")
-            logger.info(f"   ➤ Deleted:  {result.get('deleted', 0):>3}")
-            logger.info(f"   ➤ Skipped:  {result.get('skipped', 0):>3}")
-            logger.info(f"   ➤ Total:    {result.get('total_notion_items', 0):>3}")
+            logger.info(f"Projects Processed:")
+            logger.info(f"   Created:  {result.get('created', 0):>3}")
+            logger.info(f"   Updated:  {result.get('updated', 0):>3}")
+            logger.info(f"   Deleted:  {result.get('deleted', 0):>3}")
+            logger.info(f"   Skipped:  {result.get('skipped', 0):>3}")
+            logger.info(f"   Total:    {result.get('total_notion_items', 0):>3}")
             logger.info("=" * 60)
             
         except Exception as e:
-            logger.error("❌ AUTOMATIC SYNC FAILED")
+            logger.error("AUTOMATIC SYNC FAILED")
             logger.error(f"   Error: {e}")
             logger.exception("   Details:")
         
         # Wait for 30 minutes before next sync
-        logger.info("⏳ Next sync in 30 minutes...")
+        logger.info("Next sync in 30 minutes...")
         await asyncio.sleep(1800)
 
 # Register startup event
@@ -133,21 +133,21 @@ async def auto_sync_task():
 async def startup_event():
     """Start the automatic sync task when the application starts."""
     logger.info("=" * 60)
-    logger.info("🚀 NOTION GOOGLE CALENDAR SYNC API STARTING")
+    logger.info("NOTION GOOGLE CALENDAR SYNC API STARTING")
     logger.info("=" * 60)
     logger.info("Application: Notion Database API")
     logger.info("Version: 1.0.0")
     logger.info("Status: Initializing...")
     logger.info("-" * 40)
-    logger.info("📝 Note: Error details will be logged to 'error.log'")
-    logger.info("   This file is recreated each time the application starts")
+    logger.info("Note: Error details will be logged to 'error.log'")
+    logger.info("This file is recreated each time the application starts")
     logger.info("-" * 40)
     
     # Start the automatic sync task
     asyncio.create_task(auto_sync_task())
     
-    logger.info("✅ Application started successfully!")
-    logger.info("🔄 Automatic sync task scheduled (30-minute intervals)")
+    logger.info("Application started successfully!")
+    logger.info("Automatic sync task scheduled (30-minute intervals)")
     logger.info("=" * 60)
 
 # Configuration - using environment variables for security
@@ -723,7 +723,7 @@ def sync_calendar():
         # Get current Notion data with page IDs
         logger.info("Fetching data from Notion...")
         notion_items = get_notion_data_with_ids()
-        logger.info(f"✓ Retrieved {len(notion_items)} items from Notion")
+        logger.info(f"Retrieved {len(notion_items)} items from Notion")
         
         # Track stats
         created_count = 0
@@ -765,7 +765,7 @@ def sync_calendar():
                         existing_item.update(item)
                         updated_count += 1
                     except Exception as e:
-                        logger.error(f"  ❌ Error updating event for page {page_id}: {str(e)}")
+                        logger.error(f"  Error updating event for page {page_id}: {str(e)}")
                 else:
                     # No changes
                     existing_item.update(item)
@@ -792,7 +792,7 @@ def sync_calendar():
                     else:
                         skipped_count += 1
                 except Exception as e:
-                    logger.error(f"  ❌ Error creating event for page {page_id}: {str(e)}")
+                    logger.error(f"  Error creating event for page {page_id}: {str(e)}")
         
         # Find and delete events for items that no longer exist in Notion
         logger.info("Checking for deleted items...")
@@ -808,12 +808,12 @@ def sync_calendar():
                     deleted_count += 1
                 del sync_mapping[page_id]
             except Exception as e:
-                logger.error(f"  ❌ Error deleting event for removed page {page_id}: {str(e)}")
+                logger.error(f"  Error deleting event for removed page {page_id}: {str(e)}")
         
         # Save updated sync mapping
         logger.info("Saving sync mapping...")
         save_sync_mapping(sync_mapping)
-        logger.info("✓ Sync mapping saved")
+        logger.info("Sync mapping saved")
         
         result = {
             "status": "success",
@@ -890,31 +890,6 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
