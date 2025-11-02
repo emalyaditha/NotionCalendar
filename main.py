@@ -663,7 +663,6 @@ def sync_calendar():
                 if existing_item.get("hash") != item_hash:
                     # Item changed, update calendar event
                     try:
-                        logger.info(f"  🔄 Updating event: {item.get('Project_name', 'Untitled')}")
                         update_calendar_event(service, event_id, item)
                         existing_item["hash"] = item_hash
                         existing_item.update(item)
@@ -676,8 +675,6 @@ def sync_calendar():
             else:
                 # New item, create calendar event
                 try:
-                    project_name = item.get("Project_name", "Untitled")
-                    logger.info(f"  ➕ Creating event: {project_name}")
                     event_id = create_calendar_event(service, item, page_id)
                     if event_id:
                         hash_fields = (
@@ -710,8 +707,6 @@ def sync_calendar():
             try:
                 event_id = sync_mapping[page_id].get("event_id")
                 if event_id:
-                    project_name = sync_mapping[page_id].get("Project_name", "Untitled")
-                    logger.info(f"  ➖ Deleting event: {project_name}")
                     delete_calendar_event(service, event_id)
                     deleted_count += 1
                 del sync_mapping[page_id]
@@ -798,6 +793,10 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
+
+
 
 
 
