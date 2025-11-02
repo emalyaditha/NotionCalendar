@@ -18,6 +18,14 @@ from googleapiclient.errors import HttpError
 # Load environment variables from .env file
 load_dotenv()
 
+# Remove existing error log file if it exists
+ERROR_LOG_FILE = "error.log"
+if os.path.exists(ERROR_LOG_FILE):
+    try:
+        os.remove(ERROR_LOG_FILE)
+    except:
+        pass
+
 # Set up clean and readable logging
 class CleanFormatter(logging.Formatter):
     """Custom formatter for clean terminal output"""
@@ -36,18 +44,30 @@ class CleanFormatter(logging.Formatter):
         # Get timestamp
         timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
         
-        # Get log level with color
-        level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
-        level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
-        
-        # Format the message
-        formatted_message = f"[{timestamp}] {level_name} | {record.getMessage()}"
-        
-        # Add exception info if present
-        if record.exc_info:
-            formatted_message += f"\n{self.formatException(record.exc_info)}"
+        # For ERROR and CRITICAL levels, write to error log file
+        if record.levelno >= logging.ERROR:
+            error_msg = f"[{timestamp}] {record.levelname} | {record.getMessage()}\n"
+            if record.exc_info:
+                error_msg += f"{self.formatException(record.exc_info)}\n"
             
-        return formatted_message
+            # Write to error log file
+            try:
+                with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(error_msg)
+            except:
+                pass  # If we can't write to file, continue anyway
+        
+        # Format for terminal output (only show INFO and WARNING in terminal)
+        if record.levelno < logging.ERROR:
+            level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
+            level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
+            formatted_message = f"[{timestamp}] {level_name} | {record.getMessage()}"
+            return formatted_message
+        else:
+            # For errors, show a simplified message in terminal
+            level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
+            level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
+            return f"[{timestamp}] {level_name} | Error occurred (details in {ERROR_LOG_FILE})"
 
 # Configure logging with clean formatter
 logging.basicConfig(level=logging.INFO, handlers=[logging.FileHandler("sync.log")])
@@ -112,6 +132,9 @@ async def startup_event():
     logger.info("Application: Notion Database API")
     logger.info("Version: 1.0.0")
     logger.info("Status: Initializing...")
+    logger.info("-" * 40)
+    logger.info("📝 Note: Error details will be logged to 'error.log'")
+    logger.info("   This file is recreated each time the application starts")
     logger.info("-" * 40)
     
     # Start the automatic sync task
@@ -793,6 +816,10 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
+
+
 
 
 
