@@ -32,6 +32,11 @@ Thumbs.db
 
 # Logs
 *.log
+error.log
+sync.log
+
+# Sync files
+sync_mapping.json
 
 # Distribution / packaging
 dist/
