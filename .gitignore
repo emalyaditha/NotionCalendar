@@ -38,11 +38,3 @@ dist/
 build/
 *.egg-info/
 
-# Add any other files that should not be committed
-*.pyc
-.coverage
-.pytest_cache/
-
-# Replit files
-.replit
-replit.nix
