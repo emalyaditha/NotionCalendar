@@ -38,3 +38,6 @@ dist/
 build/
 *.egg-info/
 
+# Replit files (don't commit)
+.replit
+replit.nix
