@@ -6,6 +6,9 @@ expertMode = true
 channel = "stable-25_05"
 packages = ["libxcrypt"]
 
+<<<<<<< HEAD
 [[ports]]
 localPort = 8002
 externalPort = 80
+=======
+>>>>>>> c779d0b1974fcbe60060f525ba8628c1534d9974
