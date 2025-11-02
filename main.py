@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Notion Database API",
-    description="API to fetch data from a Notion database and sync with Google Calendar",
+    description="API to fetch data from a Notion database",
     version="1.0.0"
 )
 
@@ -55,7 +55,7 @@ async def auto_sync_task():
         except Exception as e:
             logger.error(f"❌ Automatic sync failed: {e}", exc_info=True)
         
-        # Wait for 30 minutes before next sync (1800 seconds)
+        # Wait for 30 minutes before next sync
         await asyncio.sleep(1800)
 
 # Register startup event
@@ -99,19 +99,14 @@ def load_sync_mapping() -> Dict:
         try:
             with open(SYNC_MAPPING_FILE, 'r') as f:
                 return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading sync mapping: {e}")
+        except:
             return {}
     return {}
 
 def save_sync_mapping(mapping: Dict):
     """Save the sync mapping to file."""
-    try:
-        with open(SYNC_MAPPING_FILE, 'w') as f:
-            json.dump(mapping, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving sync mapping: {e}")
-        raise
+    with open(SYNC_MAPPING_FILE, 'w') as f:
+        json.dump(mapping, f, indent=2)
 
 def get_google_calendar_service():
     """Get authenticated Google Calendar service."""
@@ -120,19 +115,14 @@ def get_google_calendar_service():
     if os.path.exists(GOOGLE_TOKEN_FILE):
         try:
             creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, SCOPES)
-        except Exception as e:
-            logger.warning(f"Error loading credentials from file: {e}")
+        except:
             creds = None
     
     # If there are no (valid) credentials available, let the user log in
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(GoogleAuthRequest())
-            except Exception as e:
-                logger.error(f"Error refreshing credentials: {e}")
-                creds = None
-        if not creds:
+            creds.refresh(GoogleAuthRequest())
+        else:
             if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
                 raise HTTPException(
                     status_code=500,
@@ -142,17 +132,14 @@ def get_google_calendar_service():
             creds = flow.run_local_server(port=0)
         
         # Save the credentials for the next run
-        try:
-            with open(GOOGLE_TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
-        except Exception as e:
-            logger.error(f"Error saving credentials: {e}")
+        with open(GOOGLE_TOKEN_FILE, 'w') as token:
+            token.write(creds.to_json())
     
     return build('calendar', 'v3', credentials=creds)
 
 # --- Helper functions to safely extract values from Notion properties ---
+# Defining these outside the endpoint avoids redefining them on every request.
 def get_title(prop):
-    """Extract title from Notion property."""
     if not prop or not isinstance(prop, dict):
         return ""
     try:
@@ -164,7 +151,6 @@ def get_title(prop):
         return ""
 
 def get_rich_text(prop):
-    """Extract rich text from Notion property."""
     if not prop or not isinstance(prop, dict):
         return ""
     try:
@@ -176,7 +162,6 @@ def get_rich_text(prop):
         return ""
 
 def get_date(prop):
-    """Extract date from Notion property."""
     if not prop or not isinstance(prop, dict):
         return None
     try:
@@ -188,7 +173,6 @@ def get_date(prop):
         return None
 
 def get_select(prop):
-    """Extract select/multi-select/status from Notion property."""
     if not prop or not isinstance(prop, dict):
         return None
     try:
@@ -200,12 +184,11 @@ def get_select(prop):
         elif "multi_select" in prop and isinstance(prop["multi_select"], list):
             return ", ".join([s.get("name") for s in prop["multi_select"] if "name" in s])
         return None
-    except Exception as e:
-        logger.warning(f"Error extracting select property: {e}")
+    except Exception:
         return None
 
+
 def get_files(prop):
-    """Extract file URL from Notion property."""
     if not prop or not isinstance(prop, dict):
         return None
     try:
@@ -219,7 +202,6 @@ def get_files(prop):
         return None
 
 class NotionItem(BaseModel):
-    """Model for a Notion database item."""
     Project_name: Optional[str] = ""
     Assign_Date: Optional[str] = None
     Attach_file: Optional[str] = None
@@ -231,7 +213,6 @@ class NotionItem(BaseModel):
     Tasks_Tracker: Optional[str] = ""
 
 class NotionResponse(BaseModel):
-    """Response model for Notion data."""
     data: List[NotionItem]
 
 @app.get("/", include_in_schema=False)
@@ -655,7 +636,7 @@ def sync_calendar():
                         existing_item.update(item)
                         updated_count += 1
                     except Exception as e:
-                        logger.error(f"Error updating event for page {page_id}: {str(e)}")
+                        print(f"Error updating event for page {page_id}: {str(e)}")
                 else:
                     # No changes
                     existing_item.update(item)
@@ -682,7 +663,7 @@ def sync_calendar():
                     else:
                         skipped_count += 1
                 except Exception as e:
-                    logger.error(f"Error creating event for page {page_id}: {str(e)}")
+                    print(f"Error creating event for page {page_id}: {str(e)}")
         
         # Find and delete events for items that no longer exist in Notion
         notion_page_ids = set(notion_items.keys())
@@ -697,7 +678,7 @@ def sync_calendar():
                     deleted_count += 1
                 del sync_mapping[page_id]
             except Exception as e:
-                logger.error(f"Error deleting event for removed page {page_id}: {str(e)}")
+                print(f"Error deleting event for removed page {page_id}: {str(e)}")
         
         # Save updated sync mapping
         save_sync_mapping(sync_mapping)
@@ -777,11 +758,4 @@ def health_check():
 # Only used if running directly (e.g., `python main.py`)
 if __name__ == "__main__":
     import uvicorn
-    import os
-    
-    # Use Replit's PORT environment variable if available, otherwise use 8001
-    port = int(os.environ.get("PORT", 8001))
-    
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
+    uvicorn.run(app, host="0.0.0.0", port=8002)
