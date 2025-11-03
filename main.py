@@ -552,7 +552,7 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
         if item.get("Customer_Name"):
             description_parts.append(f"Customer: {item.get('Customer_Name')}")
         if item.get("Status"):
-            description_parts.append(f"Status of the Project: {item.get('Status')}")
+            description_parts.append(f"Status: {item.get('Status')}")
         if item.get("Task_Type"):
             description_parts.append(f"Task Type: {item.get('Task_Type')}")
         if item.get("Tasks_Tracker"):
