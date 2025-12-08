@@ -486,8 +486,8 @@ def parse_notion_date(date_str: str):
 
 def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[str]:
     """Create a calendar event from Notion item and return event ID."""
-    if not item.get("Start_date"):
-        logger.info(f"Skipping item '{item.get('Project_name')}' - no start date")
+    if not item.get("End_date"):
+        logger.info(f"Skipping item '{item.get('Project_name')}' - no end date")
         return None
     
     # Initialize variables for error logging
@@ -496,54 +496,29 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
     event = {}
     
     try:
-        # Parse start date
-        start_date_str = item.get("Start_date")
-        start_dt, start_format = parse_notion_date(start_date_str or "")
+        # Parse end date as the event date
+        event_date_str = item.get("End_date")
+        event_dt, start_format = parse_notion_date(event_date_str or "")
         
-        if start_dt is None:
-            logger.warning(f"Error parsing start date for '{item.get('Project_name')}': {start_date_str}")
+        if event_dt is None:
+            logger.warning(f"Error parsing end date for '{item.get('Project_name')}': {event_date_str}")
             return None
         
         # For all-day events, we always use 'date' format
         time_format = 'date'
         
-        # Parse end date
-        end_dt = start_dt  # Default to start date
-        if item.get("End_date"):
-            end_date_str = item.get("End_date")
-            parsed_end_dt, end_format = parse_notion_date(end_date_str or "")
-            
-            if parsed_end_dt is not None:
-                end_dt = parsed_end_dt
-            # If parsing fails, we keep end_dt as start_dt (same day event)
+        # Set start date to the End Date
+        start_dt = event_dt
         
-        # For all-day events, we need to add one day to the end date
-        # Google Calendar all-day events end date is exclusive
-        end_dt = end_dt + timedelta(days=1)
+        # Set end date to End Date + 1 day (exclusive)
+        end_dt = start_dt + timedelta(days=1)
         
-        # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
+        # Format dates for Google Calendar API
         start_time = start_dt.strftime('%Y-%m-%d')
         end_time = end_dt.strftime('%Y-%m-%d')
         
         # Validate that start_time is not empty
         if not start_time:
-            logger.warning(f"Skipping item '{item.get('Project_name')}' - invalid start date format")
-            return None
-            
-        # Validate that end_time is not empty
-        if not end_time:
-            logger.warning(f"Skipping item '{item.get('Project_name')}' - invalid end date format")
-            return None
-            
-        # Validate that start_time is not after end_time
-        try:
-            start_date_obj = datetime.strptime(start_time, '%Y-%m-%d')
-            end_date_obj = datetime.strptime(end_time, '%Y-%m-%d')
-            
-            if start_date_obj > end_date_obj:
-                logger.warning(f"Skipping item '{item.get('Project_name')}' - start date is after end date")
-                return None
-        except ValueError:
             logger.warning(f"Skipping item '{item.get('Project_name')}' - invalid date format")
             return None
         
@@ -589,8 +564,8 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
 
 def update_calendar_event(service, event_id: str, item: Dict):
     """Update an existing calendar event."""
-    if not item.get("Start_date"):
-        logger.info(f"Skipping update for item '{item.get('Project_name')}' - no start date")
+    if not item.get("End_date"):
+        logger.info(f"Skipping update for item '{item.get('Project_name')}' - no end date")
         return
     
     # Initialize variables for error logging
@@ -602,56 +577,31 @@ def update_calendar_event(service, event_id: str, item: Dict):
         # Get existing event
         event = service.events().get(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
         
-        # Parse dates using the same helper function
-        start_date_str = item.get("Start_date")
-        start_dt, start_format = parse_notion_date(start_date_str or "")
+        # Parse end date as the event date
+        event_date_str = item.get("End_date")
+        event_dt, start_format = parse_notion_date(event_date_str or "")
         
-        if start_dt is None:
-            logger.warning(f"Error parsing start date for update '{item.get('Project_name')}': {start_date_str}")
+        if event_dt is None:
+            logger.warning(f"Error parsing end date for update '{item.get('Project_name')}': {event_date_str}")
             return
         
         # For all-day events, we always use 'date' format
         time_format = 'date'
         
-        # Parse end date
-        end_dt = start_dt  # Default to start date
-        if item.get("End_date"):
-            end_date_str = item.get("End_date")
-            parsed_end_dt, end_format = parse_notion_date(end_date_str or "")
-            
-            if parsed_end_dt is not None:
-                end_dt = parsed_end_dt
-            # If parsing fails, we keep end_dt as start_dt (same day event)
+        # Set start date to the End Date
+        start_dt = event_dt
         
-        # For all-day events, we need to add one day to the end date
-        # Google Calendar all-day events end date is exclusive
-        end_dt = end_dt + timedelta(days=1)
+        # Set end date to End Date + 1 day (exclusive)
+        end_dt = start_dt + timedelta(days=1)
         
-        # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
+        # Format dates for Google Calendar API
         start_time = start_dt.strftime('%Y-%m-%d')
         end_time = end_dt.strftime('%Y-%m-%d')
         
         # Validate that start_time is not empty
         if not start_time:
-            logger.warning(f"Skipping update for item '{item.get('Project_name')}' - invalid start date format")
-            return
-            
-        # Validate that end_time is not empty
-        if not end_time:
-            logger.warning(f"Skipping update for item '{item.get('Project_name')}' - invalid end date format")
-            return
-            
-        # Validate that start_time is not after end_time
-        try:
-            start_date_obj = datetime.strptime(start_time, '%Y-%m-%d')
-            end_date_obj = datetime.strptime(end_time, '%Y-%m-%d')
-            
-            if start_date_obj > end_date_obj:
-                logger.warning(f"Skipping update for item '{item.get('Project_name')}' - start date is after end date")
-                return None
-        except ValueError:
             logger.warning(f"Skipping update for item '{item.get('Project_name')}' - invalid date format")
-            return None
+            return
         
         # Build description
         description_parts = []
@@ -788,18 +738,15 @@ def sync_calendar():
         
         # Get Google Calendar service
         service = get_google_calendar_service()
-        logger.info("✓ Google Calendar API connection established")
-        
+        logger.info("Google Calendar API connection established")        
         # Load existing sync mapping
         logger.info("Loading sync mapping...")
         sync_mapping = load_sync_mapping()
-        logger.info(f"✓ Loaded {len(sync_mapping)} existing mappings")
         
         # Get current Notion data with page IDs
         logger.info("Fetching data from Notion...")
         notion_items = get_notion_data_with_ids()
-        logger.info(f"Retrieved {len(notion_items)} items from Notion")
-        
+        logger.info(f"Retrieved {len(notion_items)} items from Notion")        
         # Track stats
         created_count = 0
         updated_count = 0
@@ -965,6 +912,8 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+
 
 
 

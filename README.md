@@ -1,6 +1,6 @@
 # Notion Google Calendar Sync API
 
-This API syncs your Notion database projects with Google Calendar. When projects are added, updated, or deleted in Notion, the changes are automatically reflected in Google Calendar.
+This API automatically syncs your Notion database projects with Google Calendar. When projects are added, updated, or deleted in Notion, the changes are automatically reflected in Google Calendar. The system runs continuous synchronization every 10 seconds for real-time updates.
 
 ## 🚀 Quick Start
 
@@ -17,7 +17,6 @@ This API syncs your Notion database projects with Google Calendar. When projects
 pip install -r requirements.txt
 
 # Create .env file with your tokens (see Configuration section)
-# Copy .env.example if you have one
 
 # Run the server
 python main.py
@@ -25,10 +24,12 @@ python main.py
 
 ### Access Endpoints
 
-- API Docs: http://localhost:8000/docs
-- Get Data: http://localhost:8000/get-data
-- Sync Calendar: http://localhost:8000/sync-calendar (POST)
-- Health: http://localhost:8000/health
+- API Docs: http://localhost:8002/docs
+- Get Data: http://localhost:8002/get-data
+- Sync Calendar: http://localhost:8002/sync-calendar (POST)
+- Health: http://localhost:8002/health
+- Auto Sync Control: http://localhost:8002/auto-sync/\*
+- Clear Calendar: http://localhost:8002/clear-calendar (POST)
 
 ## 🔧 Configuration
 
@@ -37,7 +38,7 @@ python main.py
 ```
 NOTION_TOKEN=your_notion_api_token_here
 DATABASE_ID=your_notion_database_id_here
-GOOGLE_CALENDAR_ID=primary
+GOOGLE_CALENDAR_ID=your_google_calendar_id_here
 GOOGLE_CREDENTIALS_FILE=credentials.json
 GOOGLE_TOKEN_FILE=token.json
 ```
@@ -88,13 +89,44 @@ GOOGLE_TOKEN_FILE=token.json
 
 1. **`sync_mapping.json`** - Maps Notion page IDs to Google Calendar event IDs (OK to commit)
 2. **`token.json`** - Google OAuth authentication token (DO NOT commit to Git!)
+3. **`sync.log`** - Synchronization logs (DO NOT commit to Git!)
+4. **`error.log`** - Error logs (DO NOT commit to Git!)
 
-## 🎯 Usage
+## 🎯 API Endpoints
 
-### Sync Endpoint
+### Core Endpoints
+
+| Endpoint         | Method | Description                               |
+| ---------------- | ------ | ----------------------------------------- |
+| `/`              | GET    | Redirects to API documentation            |
+| `/health`        | GET    | Health check endpoint                     |
+| `/get-data`      | GET    | Fetch all records from Notion database    |
+| `/sync-calendar` | POST   | Manually trigger calendar synchronization |
+
+### Auto Sync Endpoints
+
+| Endpoint            | Method | Description                     |
+| ------------------- | ------ | ------------------------------- |
+| `/auto-sync/start`  | GET    | Start automatic synchronization |
+| `/auto-sync/stop`   | GET    | Stop automatic synchronization  |
+| `/auto-sync/status` | GET    | Get current auto-sync status    |
+
+### Calendar Management Endpoints
+
+| Endpoint          | Method | Description                            |
+| ----------------- | ------ | -------------------------------------- |
+| `/clear-calendar` | POST   | Delete all events from Google Calendar |
+
+### Logs Endpoints
+
+| Endpoint       | Method | Description                |
+| -------------- | ------ | -------------------------- |
+| `/logs/latest` | GET    | Get the latest log entries |
+
+### Sync Endpoint Details
 
 ```bash
-POST http://localhost:8000/sync-calendar
+POST http://localhost:8002/sync-calendar
 ```
 
 This endpoint:
@@ -102,7 +134,7 @@ This endpoint:
 - ✅ Creates new calendar events for new projects in Notion
 - ✅ Updates existing calendar events when projects change
 - ✅ Deletes calendar events for projects removed from Notion
-- ✅ Skips projects without start dates
+- ✅ Skips projects without end dates (required for calendar events)
 
 ### Response Example:
 
@@ -112,21 +144,22 @@ This endpoint:
   "created": 5,
   "updated": 2,
   "deleted": 1,
-  "skipped": 0,
-  "total_notion_items": 7,
-  "total_synced": 6
+  "skipped": 3,
+  "total_notion_items": 10,
+  "total_synced": 7
 }
 ```
 
 ## 🔧 How It Works
 
-1. **Tracking:** The system maintains a `sync_mapping.json` file that maps Notion page IDs to Google Calendar event IDs
-2. **Change Detection:** Uses hash comparison to detect changes in project data
-3. **Event Mapping:**
+1. **Automatic Sync:** The system automatically syncs every 10 seconds in the background
+2. **Tracking:** The system maintains a `sync_mapping.json` file that maps Notion page IDs to Google Calendar event IDs
+3. **Change Detection:** Uses hash comparison to detect changes in project data
+4. **Event Mapping:**
    - **Project Name** → Calendar Event Title
-   - **Start Date** → Event Start Date
-   - **End Date** → Event End Date (if provided)
+   - **End Date** → Event Date (used as the primary date for all-day events)
    - **Customer Name, Status, Task Type, Tasks Tracker** → Event Description
+5. **Smart Filtering:** Only creates events for items with end dates; skips items without required dates
 
 ## ⚠️ Security Important
 
@@ -135,6 +168,8 @@ This endpoint:
 - ❌ `.env` - Contains API tokens
 - ❌ `credentials.json` - OAuth credentials
 - ❌ `token.json` - Authentication tokens
+- ❌ `sync.log` - Log files
+- ❌ `error.log` - Error log files
 - ✅ `sync_mapping.json` - OK to commit (no sensitive data)
 
 ## ⚠️ Common Issues & Fixes
@@ -173,14 +208,19 @@ This endpoint:
    - Fix: Use POST method for `/sync-calendar`
 
 4. **Token expired:**
+
    - Delete `token.json` and run sync again to re-authenticate
+
+5. **404 Calendar Not Found:**
+   - Error: "HttpError 404 creating calendar event: Not Found"
+   - Fix: Verify your GOOGLE_CALENDAR_ID is correct and accessible
 
 ## 🎯 Next Steps
 
 1. ✅ Ensure `.env` file exists with your tokens
 2. ✅ Ensure `credentials.json` is in project folder
 3. ✅ Run `python main.py`
-4. ✅ Visit http://localhost:8000/docs
+4. ✅ Visit http://localhost:8002/docs
 5. ✅ Test sync with POST to `/sync-calendar`
 
 ## 🚀 Deployment
@@ -228,7 +268,7 @@ You'll need to set these environment variables in your hosting platform:
 ```
 NOTION_TOKEN=your_notion_api_token_here
 DATABASE_ID=your_notion_database_id_here
-GOOGLE_CALENDAR_ID=primary
+GOOGLE_CALENDAR_ID=your_google_calendar_id_here
 GOOGLE_CREDENTIALS_FILE=credentials.json
 GOOGLE_TOKEN_FILE=token.json
 ```
