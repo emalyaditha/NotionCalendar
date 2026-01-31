@@ -100,6 +100,10 @@ async def auto_sync_task():
     # Wait for app to be ready
     await asyncio.sleep(5)
     
+    # Check if running in production environment
+    import os
+    sync_interval = int(os.getenv("SYNC_INTERVAL", "1800"))  # Default 30 minutes (1800 seconds)
+    
     while auto_sync_enabled:
         try:
             logger.info("=" * 60)
@@ -124,9 +128,12 @@ async def auto_sync_task():
             logger.error(f"   Error: {e}")
             logger.exception("   Details:")
         
-        # Wait for 10 seconds before next sync (for testing)
-        logger.info("Next sync in 10 seconds...")
-        await asyncio.sleep(10)
+        # Wait for configured interval before next sync
+        if sync_interval == 10:
+            logger.info("Next sync in 10 seconds (testing mode)...")
+        else:
+            logger.info(f"Next sync in {sync_interval} seconds ({sync_interval//60} minutes)...")
+        await asyncio.sleep(sync_interval)
 
 # Register startup event
 @app.on_event("startup")
