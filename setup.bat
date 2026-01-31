@@ -36,7 +36,8 @@ python -m venv .venv
 :: Install dependencies
 echo Installing dependencies...
 call .venv\Scripts\activate.bat
-pip install -r requirements.txt
+pip install --upgrade pip
+pip install fastapi uvicorn[standard] google-api-python-client google-auth-oauthlib google-auth python-dotenv requests pydantic
 
 echo Setup complete. Files downloaded to Desktop\EM folder.
 echo Run run.bat to start the application.
