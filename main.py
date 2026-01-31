@@ -102,7 +102,7 @@ async def auto_sync_task():
     
     # Check if running in production environment
     import os
-    sync_interval = int(os.getenv("SYNC_INTERVAL", "1800"))  # Default 30 minutes (1800 seconds)
+    sync_interval = int(os.getenv("SYNC_INTERVAL", "10"))  # Default 10 seconds for testing
     
     while auto_sync_enabled:
         try:
