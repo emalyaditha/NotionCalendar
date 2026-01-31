@@ -1,308 +1,328 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Notion Calendar Sync</title>
-    <meta name="description" content="Sync Notion database with Google Calendar">
-    
+    <meta
+      name="description"
+      content="Sync Notion database with Google Calendar"
+    />
+
     <!-- PWA Manifest -->
-    <link rel="manifest" href="manifest.json">
-    
+    <link rel="manifest" href="manifest.json" />
+
     <!-- iOS Safari -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <meta name="apple-mobile-web-app-title" content="Notion Calendar">
-    
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Notion Calendar" />
+
     <!-- Icons -->
-    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-    <link rel="apple-touch-icon" href="icon-192.png">
-    
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+      }
+
+      .header p {
+        opacity: 0.9;
+        font-size: 1.1rem;
+      }
+
+      .content {
+        padding: 30px;
+      }
+
+      .card {
+        background: #f8f9fa;
+        border-radius: 15px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+      }
+
+      .card h2 {
+        color: #333;
+        margin-bottom: 15px;
+        font-size: 1.5rem;
+      }
+
+      .status-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 10px;
+      }
+
+      .status-online {
+        background: #28a745;
+        box-shadow: 0 0 10px #28a745;
+      }
+
+      .status-offline {
+        background: #dc3545;
+      }
+
+      .btn {
+        display: inline-block;
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 15px 30px;
+        border: none;
+        border-radius: 50px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+        text-align: center;
+        transition: transform 0.2s, box-shadow 0.2s;
+        margin: 10px 5px;
+        box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(79, 172, 254, 0.4);
+      }
+
+      .btn-secondary {
+        background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
+      }
+
+      .btn-secondary:hover {
+        box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4);
+      }
+
+      .api-info {
+        background: #e9f7fe;
+        border-left: 4px solid #4facfe;
+        padding: 20px;
+        border-radius: 0 10px 10px 0;
+        margin: 20px 0;
+      }
+
+      .api-info h3 {
+        color: #4facfe;
+        margin-bottom: 10px;
+      }
+
+      .endpoint {
+        background: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        font-family: monospace;
+        margin: 5px 0;
+        border: 1px solid #dee2e6;
+      }
+
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #6c757d;
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 768px) {
         .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
+          font-size: 2rem;
         }
-        
-        .header p {
-            opacity: 0.9;
-            font-size: 1.1rem;
-        }
-        
-        .content {
-            padding: 30px;
-        }
-        
-        .card {
-            background: #f8f9fa;
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-        }
-        
-        .card h2 {
-            color: #333;
-            margin-bottom: 15px;
-            font-size: 1.5rem;
-        }
-        
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 10px;
-        }
-        
-        .status-online {
-            background: #28a745;
-            box-shadow: 0 0 10px #28a745;
-        }
-        
-        .status-offline {
-            background: #dc3545;
-        }
-        
+
         .btn {
-            display: inline-block;
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            padding: 15px 30px;
-            border: none;
-            border-radius: 50px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            text-align: center;
-            transition: transform 0.2s, box-shadow 0.2s;
-            margin: 10px 5px;
-            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+          display: block;
+          margin: 10px 0;
         }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(79, 172, 254, 0.4);
-        }
-        
-        .btn-secondary {
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-            box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
-        }
-        
-        .btn-secondary:hover {
-            box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4);
-        }
-        
-        .api-info {
-            background: #e9f7fe;
-            border-left: 4px solid #4facfe;
-            padding: 20px;
-            border-radius: 0 10px 10px 0;
-            margin: 20px 0;
-        }
-        
-        .api-info h3 {
-            color: #4facfe;
-            margin-bottom: 10px;
-        }
-        
-        .endpoint {
-            background: white;
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-family: monospace;
-            margin: 5px 0;
-            border: 1px solid #dee2e6;
-        }
-        
-        .footer {
-            text-align: center;
-            padding: 20px;
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .btn {
-                display: block;
-                margin: 10px 0;
-            }
-        }
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container">
-        <div class="header">
-            <h1>📅 Notion Calendar Sync</h1>
-            <p>Seamlessly sync your Notion database with Google Calendar</p>
+      <div class="header">
+        <h1>📅 Notion Calendar Sync</h1>
+        <p>Seamlessly sync your Notion database with Google Calendar</p>
+      </div>
+
+      <div class="content">
+        <div class="card">
+          <h2>🚀 Quick Actions</h2>
+          <p>Manage your calendar synchronization with these tools:</p>
+
+          <button class="btn" onclick="checkHealth()">
+            🏥 Check API Health
+          </button>
+          <button class="btn" onclick="syncCalendar()">
+            🔄 Sync Calendar Now
+          </button>
+          <button class="btn btn-secondary" onclick="viewDocs()">
+            📚 View Documentation
+          </button>
+          <button class="btn btn-secondary" onclick="viewLogs()">
+            📋 View Logs
+          </button>
         </div>
-        
-        <div class="content">
-            <div class="card">
-                <h2>🚀 Quick Actions</h2>
-                <p>Manage your calendar synchronization with these tools:</p>
-                
-                <button class="btn" onclick="checkHealth()">🏥 Check API Health</button>
-                <button class="btn" onclick="syncCalendar()">🔄 Sync Calendar Now</button>
-                <button class="btn btn-secondary" onclick="viewDocs()">📚 View Documentation</button>
-                <button class="btn btn-secondary" onclick="viewLogs()">📋 View Logs</button>
-            </div>
-            
-            <div class="card">
-                <h2>📊 System Status</h2>
-                <div id="status">
-                    <span class="status-indicator status-offline"></span>
-                    <strong>Checking API status...</strong>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>🔗 API Endpoints</h2>
-                <div class="api-info">
-                    <h3>Your API is available at:</h3>
-                    <div class="endpoint" id="api-url">Determining API URL...</div>
-                    
-                    <h3 style="margin-top: 20px;">Key Endpoints:</h3>
-                    <div class="endpoint">GET /health - Health check</div>
-                    <div class="endpoint">GET /get-data - Fetch Notion data</div>
-                    <div class="endpoint">POST /sync-calendar - Manual sync</div>
-                    <div class="endpoint">GET /docs - API Documentation</div>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>📱 Mobile Installation</h2>
-                <p>To install this as an app on your device:</p>
-                <ol>
-                    <li>Open this page in Chrome/Safari</li>
-                    <li>Tap the menu (three dots) → "Add to Home Screen"</li>
-                    <li>The app will appear on your home screen</li>
-                </ol>
-            </div>
+
+        <div class="card">
+          <h2>📊 System Status</h2>
+          <div id="status">
+            <span class="status-indicator status-offline"></span>
+            <strong>Checking API status...</strong>
+          </div>
         </div>
-        
-        <div class="footer">
-            <p>Notion Calendar Sync API • Built with FastAPI</p>
-            <p>Deployed and ready for use</p>
+
+        <div class="card">
+          <h2>🔗 API Endpoints</h2>
+          <div class="api-info">
+            <h3>Your API is available at:</h3>
+            <div class="endpoint" id="api-url">Determining API URL...</div>
+
+            <h3 style="margin-top: 20px">Key Endpoints:</h3>
+            <div class="endpoint">GET /health - Health check</div>
+            <div class="endpoint">GET /get-data - Fetch Notion data</div>
+            <div class="endpoint">POST /sync-calendar - Manual sync</div>
+            <div class="endpoint">GET /docs - API Documentation</div>
+          </div>
         </div>
+
+        <div class="card">
+          <h2>📱 Mobile Installation</h2>
+          <p>To install this as an app on your device:</p>
+          <ol>
+            <li>Open this page in Chrome/Safari</li>
+            <li>Tap the menu (three dots) → "Add to Home Screen"</li>
+            <li>The app will appear on your home screen</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="footer">
+        <p>Notion Calendar Sync API • Built with FastAPI</p>
+        <p>Deployed and ready for use</p>
+      </div>
     </div>
 
     <script>
-        // Detect if running on localhost or deployed URL
-        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        const apiUrl = isLocalhost ? 'http://localhost:8002' : window.location.origin;
-        
-        document.getElementById('api-url').textContent = apiUrl;
-        
-        // Check API health on page load
-        window.addEventListener('load', checkHealth);
-        
-        async function checkHealth() {
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerHTML = '<span class="status-indicator status-offline"></span><strong>Checking...</strong>';
-            
-            try {
-                const response = await fetch(`${apiUrl}/health`);
-                const data = await response.json();
-                
-                if (response.ok) {
-                    statusDiv.innerHTML = `
+      // Detect if running on localhost or deployed URL
+      const isLocalhost =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+      const apiUrl = isLocalhost
+        ? "http://localhost:8002"
+        : window.location.origin;
+
+      document.getElementById("api-url").textContent = apiUrl;
+
+      // Check API health on page load
+      window.addEventListener("load", checkHealth);
+
+      async function checkHealth() {
+        const statusDiv = document.getElementById("status");
+        statusDiv.innerHTML =
+          '<span class="status-indicator status-offline"></span><strong>Checking...</strong>';
+
+        try {
+          const response = await fetch(`${apiUrl}/health`);
+          const data = await response.json();
+
+          if (response.ok) {
+            statusDiv.innerHTML = `
                         <span class="status-indicator status-online"></span>
                         <strong>API Online</strong> - ${data.service} is running
                     `;
-                } else {
-                    throw new Error('API returned error status');
-                }
-            } catch (error) {
-                statusDiv.innerHTML = `
+          } else {
+            throw new Error("API returned error status");
+          }
+        } catch (error) {
+          statusDiv.innerHTML = `
                     <span class="status-indicator status-offline"></span>
                     <strong>API Offline</strong> - ${error.message}
                 `;
-            }
         }
-        
-        async function syncCalendar() {
-            if (!confirm('Start calendar synchronization now?')) return;
-            
-            try {
-                const response = await fetch(`${apiUrl}/sync-calendar`, {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                
-                if (response.ok) {
-                    alert(`Sync completed!\nCreated: ${data.created}\nUpdated: ${data.updated}\nDeleted: ${data.deleted}`);
-                } else {
-                    alert(`Sync failed: ${data.detail || 'Unknown error'}`);
-                }
-            } catch (error) {
-                alert(`Sync failed: ${error.message}`);
-            }
+      }
+
+      async function syncCalendar() {
+        if (!confirm("Start calendar synchronization now?")) return;
+
+        try {
+          const response = await fetch(`${apiUrl}/sync-calendar`, {
+            method: "POST",
+          });
+          const data = await response.json();
+
+          if (response.ok) {
+            alert(
+              `Sync completed!\nCreated: ${data.created}\nUpdated: ${data.updated}\nDeleted: ${data.deleted}`
+            );
+          } else {
+            alert(`Sync failed: ${data.detail || "Unknown error"}`);
+          }
+        } catch (error) {
+          alert(`Sync failed: ${error.message}`);
         }
-        
-        function viewDocs() {
-            window.open(`${apiUrl}/docs`, '_blank');
+      }
+
+      function viewDocs() {
+        window.open(`${apiUrl}/docs`, "_blank");
+      }
+
+      async function viewLogs() {
+        try {
+          const response = await fetch(`${apiUrl}/logs/latest`);
+          const data = await response.json();
+
+          if (response.ok) {
+            const logs = data.logs.join("\n");
+            alert(`Latest logs:\n\n${logs}`);
+          } else {
+            alert("Could not fetch logs");
+          }
+        } catch (error) {
+          alert(`Error fetching logs: ${error.message}`);
         }
-        
-        async function viewLogs() {
-            try {
-                const response = await fetch(`${apiUrl}/logs/latest`);
-                const data = await response.json();
-                
-                if (response.ok) {
-                    const logs = data.logs.join('\n');
-                    alert(`Latest logs:\n\n${logs}`);
-                } else {
-                    alert('Could not fetch logs');
-                }
-            } catch (error) {
-                alert(`Error fetching logs: ${error.message}`);
-            }
-        }
-        
-        // Register service worker for PWA functionality
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then(registration => console.log('SW registered'))
-                    .catch(err => console.log('SW registration failed'));
-            });
-        }
+      }
+
+      // Register service worker for PWA functionality
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then((registration) => console.log("SW registered"))
+            .catch((err) => console.log("SW registration failed"));
+        });
+      }
     </script>
-</body>
+  </body>
 </html>
