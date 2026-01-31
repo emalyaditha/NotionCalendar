@@ -1,5 +1,5 @@
 @echo off
 title Notion Calendar API
-cd /d "D:\MyProjects\My API"
+cd /d "%~dp0"
 call .venv\Scripts\activate.bat
 python main.py
