@@ -97,8 +97,8 @@ def format_status_text(status: str) -> str:
 
 def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[str]:
     """Create a calendar event from Notion item and return event ID."""
-    if not item.get("Start_date"):
-        logger.info(f"Skipping item '{item.get('Project_name')}' - no start date")
+    if not item.get("End_date"):
+        logger.info(f"Skipping item '{item.get('Project_name')}' - no end date")
         return None
     
     # Initialize variables for error logging
@@ -107,30 +107,22 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
     event = {}
     
     try:
-        # Parse start date
-        start_date_str = item.get("Start_date")
-        start_dt, start_format = parse_notion_date(start_date_str or "")
+        # Parse end date as the event date
+        event_date_str = item.get("End_date")
+        event_dt, start_format = parse_notion_date(event_date_str or "")
         
-        if start_dt is None:
-            logger.warning(f"Error parsing start date for '{item.get('Project_name')}': {start_date_str}")
+        if event_dt is None:
+            logger.warning(f"Error parsing end date for '{item.get('Project_name')}': {event_date_str}")
             return None
         
         # For all-day events, we always use 'date' format
         time_format = 'date'
         
-        # Parse end date
-        end_dt = start_dt  # Default to start date
-        if item.get("End_date"):
-            end_date_str = item.get("End_date")
-            parsed_end_dt, end_format = parse_notion_date(end_date_str or "")
-            
-            if parsed_end_dt is not None:
-                end_dt = parsed_end_dt
-            # If parsing fails, we keep end_dt as start_dt (same day event)
+        # Set start date to the End Date
+        start_dt = event_dt
         
-        # For all-day events, we need to add one day to the end date
-        # Google Calendar all-day events end date is exclusive
-        end_dt = end_dt + timedelta(days=1)
+        # Set end date to End Date + 1 day (exclusive)
+        end_dt = start_dt + timedelta(days=1)
         
         # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
         start_time = start_dt.strftime('%Y-%m-%d')
@@ -203,8 +195,8 @@ def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[
 
 def update_calendar_event(service, event_id: str, item: Dict, notion_page_id: str):
     """Update an existing calendar event."""
-    if not item.get("Start_date"):
-        logger.info(f"Skipping update for item '{item.get('Project_name')}' - no start date")
+    if not item.get("End_date"):
+        logger.info(f"Skipping update for item '{item.get('Project_name')}' - no end date")
         return
     
     # Initialize variables for error logging
@@ -216,30 +208,22 @@ def update_calendar_event(service, event_id: str, item: Dict, notion_page_id: st
         # Get existing event
         event = service.events().get(calendarId=settings.calendar_id, eventId=event_id).execute()
         
-        # Parse dates using the same helper function
-        start_date_str = item.get("Start_date")
-        start_dt, start_format = parse_notion_date(start_date_str or "")
+        # Parse end date as the event date
+        event_date_str = item.get("End_date")
+        event_dt, start_format = parse_notion_date(event_date_str or "")
         
-        if start_dt is None:
-            logger.warning(f"Error parsing start date for update '{item.get('Project_name')}': {start_date_str}")
+        if event_dt is None:
+            logger.warning(f"Error parsing end date for update '{item.get('Project_name')}': {event_date_str}")
             return
         
         # For all-day events, we always use 'date' format
         time_format = 'date'
         
-        # Parse end date
-        end_dt = start_dt  # Default to start date
-        if item.get("End_date"):
-            end_date_str = item.get("End_date")
-            parsed_end_dt, end_format = parse_notion_date(end_date_str or "")
-            
-            if parsed_end_dt is not None:
-                end_dt = parsed_end_dt
-            # If parsing fails, we keep end_dt as start_dt (same day event)
+        # Set start date to the End Date
+        start_dt = event_dt
         
-        # For all-day events, we need to add one day to the end date
-        # Google Calendar all-day events end date is exclusive
-        end_dt = end_dt + timedelta(days=1)
+        # Set end date to End Date + 1 day (exclusive)
+        end_dt = start_dt + timedelta(days=1)
         
         # Format dates for Google Calendar API (YYYY-MM-DD format for all-day events)
         start_time = start_dt.strftime('%Y-%m-%d')

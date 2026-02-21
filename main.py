@@ -1,299 +1,98 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import RedirectResponse
-from typing import List, Optional, Dict
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+
 import os
-import requests
 import json
 import asyncio
 import logging
+import hashlib
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
+
+import requests
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Load environment variables from .env file
-load_dotenv()
+# -------------------------
+# Load env
+# -------------------------
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-# Remove existing error log file if it exists
-ERROR_LOG_FILE = "error.log"
-if os.path.exists(ERROR_LOG_FILE):
-    try:
-        os.remove(ERROR_LOG_FILE)
-    except:
-        pass
-
-# Set up clean and readable logging
-class CleanFormatter(logging.Formatter):
-    """Custom formatter for clean terminal output"""
-    
-    # Define color codes for different log levels
-    COLORS = {
-        'DEBUG': '\033[36m',    # Cyan
-        'INFO': '\033[32m',     # Green
-        'WARNING': '\033[33m',  # Yellow
-        'ERROR': '\033[31m',    # Red
-        'CRITICAL': '\033[35m', # Magenta
-        'RESET': '\033[0m'      # Reset
-    }
-    
-    def format(self, record):
-        # Get timestamp
-        timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # For ERROR and CRITICAL levels, write to error log file only
-        if record.levelno >= logging.ERROR:
-            error_msg = f"[{timestamp}] {record.levelname} | {record.getMessage()}\n"
-            if record.exc_info:
-                error_msg += f"{self.formatException(record.exc_info)}\n"
-            
-            # Write to error log file
-            try:
-                with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
-                    f.write(error_msg)
-            except:
-                pass  # If we can't write to file, continue anyway
-            
-            # Return empty string to prevent output to terminal
-            return ""
-        
-        # Format for terminal output (only show INFO and WARNING in terminal)
-        level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
-        level_name = f"{level_color}{record.levelname:>8}{self.COLORS['RESET']}"
-        formatted_message = f"[{timestamp}] {level_name} | {record.getMessage()}"
-        return formatted_message
-
-# Configure logging with clean formatter
-logging.basicConfig(level=logging.INFO, handlers=[logging.FileHandler("sync.log")])
-logger = logging.getLogger(__name__)
-
-# Create console handler with clean formatter
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-console_handler.setFormatter(CleanFormatter())
-logger.addHandler(console_handler)
-
-# Filter out ERROR and CRITICAL logs from console
-class ConsoleFilter(logging.Filter):
-    def filter(self, record):
-        # Only allow INFO and WARNING levels to console
-        return record.levelno < logging.ERROR
-
-console_handler.addFilter(ConsoleFilter())
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="Notion Database API",
-    description="API to fetch data from a Notion database",
-    version="1.0.0"
-)
-
-# Global variable to control automatic sync
-auto_sync_enabled = True
-
-# Background task for automatic sync
-async def auto_sync_task():
-    """Run sync-calendar automatically at regular intervals."""
-    # Wait for app to be ready
-    await asyncio.sleep(5)
-    
-    # Check if running in production environment
-    import os
-    sync_interval = int(os.getenv("SYNC_INTERVAL", "10"))  # Default 10 seconds for testing
-    
-    while auto_sync_enabled:
-        try:
-            logger.info("=" * 60)
-            logger.info("AUTOMATIC CALENDAR SYNC STARTED")
-            logger.info("=" * 60)
-            
-            # Call the sync_calendar function
-            result = sync_calendar()
-            
-            logger.info("SYNC COMPLETED SUCCESSFULLY")
-            logger.info("-" * 40)
-            logger.info(f"Projects Processed:")
-            logger.info(f"   Created:  {result.get('created', 0):>3}")
-            logger.info(f"   Updated:  {result.get('updated', 0):>3}")
-            logger.info(f"   Deleted:  {result.get('deleted', 0):>3}")
-            logger.info(f"   Skipped:  {result.get('skipped', 0):>3}")
-            logger.info(f"   Total:    {result.get('total_notion_items', 0):>3}")
-            logger.info("=" * 60)
-            
-        except Exception as e:
-            logger.error("AUTOMATIC SYNC FAILED")
-            logger.error(f"   Error: {e}")
-            logger.exception("   Details:")
-        
-        # Wait for configured interval before next sync
-        if sync_interval == 10:
-            logger.info("Next sync in 10 seconds (testing mode)...")
-        else:
-            logger.info(f"Next sync in {sync_interval} seconds ({sync_interval//60} minutes)...")
-        await asyncio.sleep(sync_interval)
-
-# Register startup event
-@app.on_event("startup")
-async def startup_event():
-    """Start the automatic sync task when the application starts."""
-    logger.info("=" * 60)
-    logger.info("NOTION GOOGLE CALENDAR SYNC API STARTING")
-    logger.info("=" * 60)
-    logger.info("Application: Notion Database API")
-    logger.info("Version: 1.0.0")
-    logger.info("Status: Initializing...")
-    logger.info("-" * 40)
-    logger.info("Note: Error details will be logged to 'error.log'")
-    logger.info("This file is recreated each time the application starts")
-    logger.info("-" * 40)
-    
-    # Start the automatic sync task
-    asyncio.create_task(auto_sync_task())
-    
-    logger.info("Application started successfully!")
-    logger.info("Automatic sync task scheduled (10-second intervals for testing)")
-    logger.info("=" * 60)
-
-# Configuration - using environment variables for security
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
-GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+
+# accept either GOOGLE_CALENDAR_ID or your old GOOGLE_CALENDAR_ID_LOCAL
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID") or os.getenv("GOOGLE_CALENDAR_ID_LOCAL") or "primary"
+
 GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
 GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
 
-# Scopes required for Google Calendar API
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+# IMPORTANT: multi data sources require new version (based on your error)
+NOTION_VERSION = os.getenv("NOTION_VERSION", "2025-09-03")
 
-# Validate required environment variables
+SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "300"))
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "")
+SYNC_API_KEY = os.getenv("SYNC_API_KEY", "")  # optional
+
 if not NOTION_TOKEN:
     raise ValueError("NOTION_TOKEN environment variable is required")
 if not DATABASE_ID:
     raise ValueError("DATABASE_ID environment variable is required")
 
-# Notion API headers
-headers = {
-    'Authorization': f'Bearer {NOTION_TOKEN}',
-    'Notion-Version': '2025-09-03',  # Latest version supporting multiple data sources
-    'Content-Type': 'application/json'
-}
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Cache for data_source_id to avoid repeated API calls
-_data_source_id_cache = None
-
-# File to store mapping between Notion items and Google Calendar events
 SYNC_MAPPING_FILE = "sync_mapping.json"
+ERROR_LOG_FILE = "error.log"
 
-def load_sync_mapping() -> Dict:
-    """Load the sync mapping from file."""
-    if os.path.exists(SYNC_MAPPING_FILE):
-        try:
-            with open(SYNC_MAPPING_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+# -------------------------
+# Logging
+# -------------------------
+logger = logging.getLogger("notion-calendar-sync")
+logger.setLevel(logging.INFO)
 
-def save_sync_mapping(mapping: Dict):
-    """Save the sync mapping to file."""
-    with open(SYNC_MAPPING_FILE, 'w') as f:
-        json.dump(mapping, f, indent=2)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s | %(message)s"))
+logger.addHandler(ch)
 
-def get_google_calendar_service():
-    """Get authenticated Google Calendar service."""
-    creds = None
-    # Check if token file exists
-    if os.path.exists(GOOGLE_TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, SCOPES)
-        except:
-            creds = None
-    
-    # If there are no (valid) credentials available, let the user log in
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(GoogleAuthRequest())
-        else:
-            if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Google credentials file '{GOOGLE_CREDENTIALS_FILE}' not found. Please download it from Google Cloud Console."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        
-        # Save the credentials for the next run
-        with open(GOOGLE_TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-    
-    return build('calendar', 'v3', credentials=creds)
+fh = logging.FileHandler("sync.log", encoding="utf-8")
+fh.setLevel(logging.INFO)
+fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s | %(message)s"))
+logger.addHandler(fh)
 
-# --- Helper functions to safely extract values from Notion properties ---
-# Defining these outside the endpoint avoids redefining them on every request.
-def get_title(prop):
-    if not prop or not isinstance(prop, dict):
-        return ""
-    try:
-        title_list = prop.get("title", [])
-        if title_list and len(title_list) > 0:
-            return title_list[0].get("plain_text", "")
-        return ""
-    except (KeyError, IndexError, AttributeError):
-        return ""
+eh = logging.FileHandler(ERROR_LOG_FILE, encoding="utf-8")
+eh.setLevel(logging.ERROR)
+eh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s | %(message)s"))
+logger.addHandler(eh)
 
-def get_rich_text(prop):
-    if not prop or not isinstance(prop, dict):
-        return ""
-    try:
-        rt_list = prop.get("rich_text", [])
-        if rt_list and len(rt_list) > 0:
-            return rt_list[0].get("plain_text", "")
-        return ""
-    except (KeyError, IndexError, AttributeError):
-        return ""
+# -------------------------
+# Security (optional API key)
+# -------------------------
+def require_api_key(x_api_key: Optional[str] = Header(default=None)):
+    if not SYNC_API_KEY:
+        return
+    if not x_api_key or x_api_key != SYNC_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized: missing/invalid X-API-Key")
 
-def get_date(prop):
-    if not prop or not isinstance(prop, dict):
-        return None
-    try:
-        date_obj = prop.get("date")
-        if date_obj and isinstance(date_obj, dict):
-            return date_obj.get("start")
-        return None
-    except (KeyError, AttributeError):
-        return None
+# -------------------------
+# Notion headers
+# -------------------------
+def notion_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
 
-def get_select(prop):
-    if not prop or not isinstance(prop, dict):
-        return None
-    try:
-        # Handle both legacy "select" and new "status" property types
-        if "status" in prop and isinstance(prop["status"], dict):
-            return prop["status"].get("name")
-        elif "select" in prop and isinstance(prop["select"], dict):
-            return prop["select"].get("name")
-        elif "multi_select" in prop and isinstance(prop["multi_select"], list):
-            return ", ".join([s.get("name") for s in prop["multi_select"] if "name" in s])
-        return None
-    except Exception:
-        return None
-
-
-def get_files(prop):
-    if not prop or not isinstance(prop, dict):
-        return None
-    try:
-        files_list = prop.get("files", [])
-        if files_list and len(files_list) > 0:
-            file_obj = files_list[0].get("file", {})
-            if file_obj and isinstance(file_obj, dict):
-                return file_obj.get("url", "")
-        return None
-    except (KeyError, IndexError, AttributeError):
-        return None
-
+# -------------------------
+# Models
+# -------------------------
 class NotionItem(BaseModel):
     Project_name: Optional[str] = ""
     Assign_Date: Optional[str] = None
@@ -308,632 +107,475 @@ class NotionItem(BaseModel):
 class NotionResponse(BaseModel):
     data: List[NotionItem]
 
-@app.get("/", include_in_schema=False)
-def root_redirect():
-    """Redirects the root path to the API documentation."""
-    return RedirectResponse(url="/docs")
-
-def get_data_source_id():
-    """
-    Get the data source ID from the database.
-    For databases with multiple data sources, we use the first one.
-    """
-    global _data_source_id_cache
-    if _data_source_id_cache:
-        return _data_source_id_cache
-    
-    try:
-        # First, get the database information to retrieve data sources
-        url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        db_info = response.json()
-        
-        # Get data sources from the database
-        data_sources = db_info.get("data_sources", [])
-        if not data_sources:
-            raise HTTPException(
-                status_code=400,
-                detail="No data sources found in the database"
-            )
-        
-        # Use the first data source ID
-        _data_source_id_cache = data_sources[0].get("id")
-        if not _data_source_id_cache:
-            raise HTTPException(
-                status_code=400,
-                detail="Unable to retrieve data source ID from database"
-            )
-        
-        return _data_source_id_cache
-    except requests.exceptions.HTTPError as http_err:
-        error_detail = f"Notion API error: {http_err}"
-        if hasattr(http_err.response, 'text'):
-            try:
-                error_body = http_err.response.json()
-                error_detail = f"Notion API error: {error_body.get('message', str(http_err))}"
-            except:
-                error_detail = f"Notion API error: {http_err.response.text if hasattr(http_err.response, 'text') else str(http_err)}"
-        raise HTTPException(
-            status_code=http_err.response.status_code if hasattr(http_err, 'response') else 500,
-            detail=error_detail
-        )
-
-@app.get("/get-data", response_model=NotionResponse, tags=["Notion"])
-def get_data():
-    """
-    Fetch all records from the configured Notion database.
-    """
-    try:
-        # Get the data source ID (required for API version 2025-09-03+)
-        data_source_id = get_data_source_id()
-        
-        # Query using the data source ID instead of database ID
-        url = f"https://api.notion.com/v1/data_sources/{data_source_id}/query"
-        response = requests.post(url, headers=headers, json={})
-        response.raise_for_status()
-        data = response.json()
-
-        results = []
-        for page in data.get("results", []):
-            try:
-                props = page.get("properties", {})
-                if not props:
-                    continue
-                    
-                item = {
-                    "Project_name": get_title(props.get("Project name", {})),
-                    "Assign_Date": get_date(props.get("Assign Date", {})),
-                    "Attach_file": get_files(props.get("Attach file", {})),
-                    "Customer_Name": get_rich_text(props.get("Customer Name", {})),
-                    "End_date": get_date(props.get("End date", {})),
-                    "Start_date": get_date(props.get("Start date", {})),
-                    "Status": get_select(props.get("Status", {})),
-                    "Task_Type": get_select(props.get("Task Type", {})),
-                    "Tasks_Tracker": get_rich_text(props.get("Tasks Tracker", {})),
-                }
-                results.append(item)
-            except Exception as page_error:
-                # Log the error but continue processing other pages
-                logger.error(f"Error processing page: {str(page_error)}", exc_info=True)
-                continue
-
-        # Sort results by Project_name so items are grouped project-wise
-        results.sort(key=lambda x: (x.get("Project_name", "").lower(), x.get("Start_date") or ""))
-        
-        return {"data": results}
-
-    except requests.exceptions.HTTPError as http_err:
-        error_detail = f"Notion API error: {http_err}"
-        if hasattr(http_err.response, 'text'):
-            try:
-                error_body = http_err.response.json()
-                error_detail = f"Notion API error: {error_body.get('message', str(http_err))}"
-            except:
-                error_detail = f"Notion API error: {http_err.response.text if hasattr(http_err.response, 'text') else str(http_err)}"
-        raise HTTPException(status_code=http_err.response.status_code if hasattr(http_err, 'response') else 500, detail=error_detail)
-    except requests.exceptions.RequestException as req_err:
-        raise HTTPException(status_code=503, detail=f"Failed to connect to Notion API: {str(req_err)}")
-    except Exception as e:
-        logger.error("Internal server error in get_data endpoint", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-def get_notion_data_with_ids():
-    """
-    Fetch all records from Notion database with page IDs for tracking.
-    Returns a dictionary with page_id as key and item data as value.
-    """
-    try:
-        data_source_id = get_data_source_id()
-        url = f"https://api.notion.com/v1/data_sources/{data_source_id}/query"
-        response = requests.post(url, headers=headers, json={})
-        response.raise_for_status()
-        data = response.json()
-
-        notion_items = {}
-        for page in data.get("results", []):
-            try:
-                page_id = page.get("id")
-                props = page.get("properties", {})
-                if not props or not page_id:
-                    continue
-                    
-                item = {
-                    "Project_name": get_title(props.get("Project name", {})),
-                    "Assign_Date": get_date(props.get("Assign Date", {})),
-                    "Attach_file": get_files(props.get("Attach file", {})),
-                    "Customer_Name": get_rich_text(props.get("Customer Name", {})),
-                    "End_date": get_date(props.get("End date", {})),
-                    "Start_date": get_date(props.get("Start date", {})),
-                    "Status": get_select(props.get("Status", {})),
-                    "Task_Type": get_select(props.get("Task Type", {})),
-                    "Tasks_Tracker": get_rich_text(props.get("Tasks Tracker", {})),
-                }
-                notion_items[page_id] = item
-            except Exception as page_error:
-                logger.error(f"Error processing page: {str(page_error)}", exc_info=True)
-                continue
-
-        return notion_items
-    except Exception as e:
-        logger.error(f"Error fetching Notion data: {str(e)}", exc_info=True)
-        raise
-
-def parse_notion_date(date_str: str):
-    """Parse Notion date string and return datetime object and format type."""
-    if not date_str:
-        return None, None
-    
-    # For all-day events, we only care about the date part, not time
-    # Check if it's a date-only format (YYYY-MM-DD)
-    if 'T' not in date_str:
+# -------------------------
+# Mapping helpers
+# -------------------------
+def load_sync_mapping() -> Dict[str, Any]:
+    if os.path.exists(SYNC_MAPPING_FILE):
         try:
-            dt = datetime.strptime(date_str, '%Y-%m-%d')
-            return dt, 'date'  # Always treat as date for all-day events
-        except:
-            try:
-                dt = datetime.fromisoformat(date_str)
-                return dt, 'date'  # Always treat as date for all-day events
-            except:
-                logger.warning(f"Error parsing date '{date_str}': Could not parse")
-                return None, None
-    else:
-        # Even if it contains time, we'll treat it as an all-day event
-        # Extract just the date part
-        date_part = date_str.split('T')[0]
-        try:
-            dt = datetime.strptime(date_part, '%Y-%m-%d')
-            return dt, 'date'  # Always treat as date for all-day events
-        except:
-            logger.warning(f"Error parsing datetime '{date_str}': Could not parse")
-            return None, None
+            with open(SYNC_MAPPING_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
-def create_calendar_event(service, item: Dict, notion_page_id: str) -> Optional[str]:
-    """Create a calendar event from Notion item and return event ID."""
-    if not item.get("End_date"):
-        logger.info(f"Skipping item '{item.get('Project_name')}' - no end date")
+def save_sync_mapping(mapping: Dict[str, Any]):
+    with open(SYNC_MAPPING_FILE, "w", encoding="utf-8") as f:
+        json.dump(mapping, f, indent=2, ensure_ascii=False)
+
+def stable_item_hash(item: Dict[str, Any]) -> str:
+    payload = json.dumps(item, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+# -------------------------
+# Notion property extractors
+# -------------------------
+def get_title(prop: Dict[str, Any]) -> str:
+    try:
+        title_list = prop.get("title", [])
+        if title_list:
+            return title_list[0].get("plain_text", "") or ""
+        return ""
+    except Exception:
+        return ""
+
+def get_rich_text(prop: Dict[str, Any]) -> str:
+    try:
+        rt_list = prop.get("rich_text", [])
+        if rt_list:
+            return rt_list[0].get("plain_text", "") or ""
+        return ""
+    except Exception:
+        return ""
+
+def get_date(prop: Dict[str, Any]) -> Optional[str]:
+    try:
+        date_obj = prop.get("date")
+        if isinstance(date_obj, dict):
+            return date_obj.get("start")
         return None
-    
-    # Initialize variables for error logging
-    start_time = ""
-    end_time = ""
-    event = {}
-    
+    except Exception:
+        return None
+
+def get_date_end(prop: Dict[str, Any]) -> Optional[str]:
     try:
-        # Parse end date as the event date
-        event_date_str = item.get("End_date")
-        event_dt, start_format = parse_notion_date(event_date_str or "")
+        date_obj = prop.get("date")
+        if isinstance(date_obj, dict):
+            return date_obj.get("end")
+        return None
+    except Exception:
+        return None
+
+def get_select(prop: Dict[str, Any]) -> Optional[str]:
+    try:
+        if "status" in prop and isinstance(prop["status"], dict):
+            return prop["status"].get("name")
+        if "select" in prop and isinstance(prop["select"], dict):
+            return prop["select"].get("name")
+        if "multi_select" in prop and isinstance(prop["multi_select"], list):
+            vals = [s.get("name") for s in prop["multi_select"] if s.get("name")]
+            return ", ".join(vals) if vals else None
+        return None
+    except Exception:
+        return None
+
+def get_files(prop: Dict[str, Any]) -> Optional[str]:
+    try:
+        files_list = prop.get("files", [])
+        if files_list:
+            f0 = files_list[0]
+            if "file" in f0 and isinstance(f0["file"], dict):
+                return f0["file"].get("url", "")
+            if "external" in f0 and isinstance(f0["external"], dict):
+                return f0["external"].get("url", "")
+        return None
+    except Exception:
+        return None
+
+# -------------------------
+# Notion query (CORRECT ENDPOINT)
+# -------------------------
+def notion_query_all_pages() -> List[Dict[str, Any]]:
+    """
+    Fetch ALL rows from database using:
+      - New path: /v1/data_sources/{DATA_SOURCE_ID}/query (if DATA_SOURCE_ID exists)
+      - Legacy path: /v1/databases/{DATABASE_ID}/query
+    """
+    # Use data source ID if available (for databases with multiple data sources)
+    if DATA_SOURCE_ID:
+        url = f"https://api.notion.com/v1/data_sources/{DATA_SOURCE_ID}/query"
+    else:
+        url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+
+    all_results: List[Dict[str, Any]] = []
+    payload: Dict[str, Any] = {"page_size": 100}
+
+    while True:
+        resp = requests.post(url, headers=notion_headers(), json=payload, timeout=60)
+        if not resp.ok:
+            raise HTTPException(status_code=resp.status_code, detail=f"Notion query failed: {resp.text}")
+
+        data = resp.json()
+        all_results.extend(data.get("results", []))
+
+        if not data.get("has_more"):
+            break
+
+        payload["start_cursor"] = data.get("next_cursor")
+
+    return all_results
+
+def notion_items_with_ids() -> Dict[str, Dict[str, Any]]:
+    pages = notion_query_all_pages()
+    out: Dict[str, Dict[str, Any]] = {}
+
+    for page in pages:
+        page_id = page.get("id")
+        props = page.get("properties") or {}
+        if not page_id or not props:
+            continue
+
+        item = {
+            "Project_name": get_title(props.get("Project name", {})) or get_title(props.get("Task name", {})),
+            "Assign_Date": get_date(props.get("Assign Date", {})),
+            "Attach_file": get_files(props.get("Attach file", {})),
+            "Customer_Name": get_rich_text(props.get("Customer Name", {})),
+            "End_date": get_date(props.get("End date", {})) or get_date_end(props.get("Due date", {})),
+            "Start_date": get_date(props.get("Start date", {})) or get_date(props.get("Due date", {})),
+            "Status": get_select(props.get("Status", {})),
+            "Task_Type": get_select(props.get("Task Type", {})),
+            "Tasks_Tracker": get_rich_text(props.get("Tasks Tracker", {})) or get_rich_text(props.get("Description", {})),
+        }
+        out[page_id] = item
+
+    return out
+
+# -------------------------
+# Google Calendar
+# -------------------------
+def get_google_calendar_service():
+    creds = None
+    if os.path.exists(GOOGLE_TOKEN_FILE):
+        try:
+            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, SCOPES)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(GoogleAuthRequest())
+        else:
+            if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
+                raise HTTPException(status_code=500, detail=f"Missing {GOOGLE_CREDENTIALS_FILE}")
+            flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDENTIALS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        with open(GOOGLE_TOKEN_FILE, "w", encoding="utf-8") as token:
+            token.write(creds.to_json())
+
+    return build("calendar", "v3", credentials=creds)
+
+SYNC_MARKER_KEY = "notion_sync"
+SYNC_MARKER_VAL = "true"
+
+# Google Calendar Color IDs
+# 1: Blue, 2: Light Green, 3: Purple, 4: Pink, 5: Yellow, 
+# 6: Orange, 7: Light Blue, 8: Grey, 9: Dark Blue, 10: Green, 11: Red
+STATUS_COLORS = {
+    "To Do (Pending)": "8",                   # Grey
+    "Discussion with Client Required": "5",   # Yellow (Banana)
+    "In progress": "9",                       # Blue (Blueberry)
+    "Discussion with Dev Team Required": "3", # Purple (Grape)
+    "Costing": "3",                           # Purple (Grape)
+    "Pending Client Approval": "4",           # Pink (Flamingo)
+    "Development": "8",                       # Grey
+    "UAT Client Approval Pending": "6",       # Orange (Tangerine)
+    "Hold": "8",                              # Brown/Grey
+    "Canceled": "11",                         # Red (Tomato)
+    "Rejected": "11",                         # Red (Tomato)
+    "Done": "10",                             # Green (Basil)
+}
+
+def parse_notion_date(date_str: Optional[str]) -> Optional[datetime]:
+    if not date_str:
+        return None
+    date_part = date_str.split("T")[0]
+    try:
+        return datetime.strptime(date_part, "%Y-%m-%d")
+    except Exception:
+        return None
+
+def build_event_description(item: Dict[str, Any]) -> str:
+    parts = []
+    if item.get("Customer_Name"):
+        parts.append(f"Customer: {item['Customer_Name']}")
+    if item.get("Status"):
+        parts.append(f"Status: {item['Status']}")
+    if item.get("Task_Type"):
+        parts.append(f"Task Type: {item['Task_Type']}")
+    if item.get("Tasks_Tracker"):
+        parts.append(f"Tasks Tracker: {item['Tasks_Tracker']}")
+    if item.get("Attach_file"):
+        parts.append(f"Attachment: {item['Attach_file']}")
+    return "\n".join(parts)
+
+def create_events_for_item(service, item: Dict[str, Any]) -> List[str]:
+    start_dt = parse_notion_date(item.get("Start_date")) or parse_notion_date(item.get("End_date"))
+    if not start_dt:
+        return []
+
+    end_dt = parse_notion_date(item.get("End_date"))
+    if end_dt:
+        # Calculate inclusive days difference
+        num_days = (end_dt - start_dt).days + 1
+    else:
+        num_days = 1
+
+    if num_days <= 0:
+        num_days = 1
+
+    if num_days > 100:
+        logger.warning(f"Item '{item.get('Project_name')}' spans {num_days} days. Limiting to 100 days to prevent API spam.")
+        num_days = 100
+
+    event_ids = []
+    base_summary = item.get("Project_name") or "Untitled Project"
+    logger.info(f"Creating {num_days} daily events for '{base_summary}'")
+    
+    for i in range(num_days):
+        current_dt = start_dt + timedelta(days=i)
         
-        if event_dt is None:
-            logger.warning(f"Error parsing end date for '{item.get('Project_name')}': {event_date_str}")
-            return None
-        
-        # For all-day events, we always use 'date' format
-        time_format = 'date'
-        
-        # Set start date to the End Date
-        start_dt = event_dt
-        
-        # Set end date to End Date + 1 day (exclusive)
-        end_dt = start_dt + timedelta(days=1)
-        
-        # Format dates for Google Calendar API
-        start_time = start_dt.strftime('%Y-%m-%d')
-        end_time = end_dt.strftime('%Y-%m-%d')
-        
-        # Validate that start_time is not empty
-        if not start_time:
-            logger.warning(f"Skipping item '{item.get('Project_name')}' - invalid date format")
-            return None
-        
-        # Build event description
-        description_parts = []
-        if item.get("Customer_Name"):
-            description_parts.append(f"Customer: {item.get('Customer_Name')}")
-        if item.get("Status"):
-            description_parts.append(f"Status: {item.get('Status')}")
-        if item.get("Task_Type"):
-            description_parts.append(f"Task Type: {item.get('Task_Type')}")
-        if item.get("Tasks_Tracker"):
-            description_parts.append(f"Tasks Tracker: {item.get('Tasks_Tracker')}")
-        if item.get("Attach_file"):
-            description_parts.append(f"Attachment: {item.get('Attach_file')}")
-        
-        description = "\n".join(description_parts) if description_parts else ""
-        
-        event = {
-            'summary': item.get("Project_name") or "Untitled Project",
-            'description': description,
-            'start': {
-                time_format: start_time,
-            },
-            'end': {
-                time_format: end_time,
-            },
+        if num_days > 1:
+            summary = f"{base_summary} ({i+1}/{num_days})"
+        else:
+            summary = base_summary
+
+        body = {
+            "summary": summary,
+            "description": build_event_description(item),
+            "start": {"date": current_dt.strftime("%Y-%m-%d")},
+            "end": {"date": (current_dt + timedelta(days=1)).strftime("%Y-%m-%d")},
+            "colorId": STATUS_COLORS.get(item.get("Status"), "1"),
+            "extendedProperties": {"private": {SYNC_MARKER_KEY: SYNC_MARKER_VAL}},
         }
         
-        created_event = service.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=event).execute()
-        return created_event.get('id')
-    except HttpError as e:
-        if e.resp.status == 400:
-            logger.error(f"HttpError 400 for item '{item.get('Project_name', 'Unknown')}': {e.reason}")
-            logger.error(f"  Start time: {start_time}, End time: {end_time}")
-            logger.error(f"  Event data: {event}")
-        else:
-            logger.error(f"HttpError {e.resp.status} creating calendar event: {e.reason}")
-        return None
-    except Exception as e:
-        logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
-        return None
+        try:
+            created = service.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=body).execute()
+            if created and created.get("id"):
+                event_ids.append(created.get("id"))
+        except Exception as e:
+            logger.error(f"Create event failed: {e}", exc_info=True)
+            
+    return event_ids
 
-def update_calendar_event(service, event_id: str, item: Dict):
-    """Update an existing calendar event."""
-    if not item.get("End_date"):
-        logger.info(f"Skipping update for item '{item.get('Project_name')}' - no end date")
-        return
-    
-    # Initialize variables for error logging
-    start_time = ""
-    end_time = ""
-    event = {}
-    
-    try:
-        # Get existing event
-        event = service.events().get(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
-        
-        # Parse end date as the event date
-        event_date_str = item.get("End_date")
-        event_dt, start_format = parse_notion_date(event_date_str or "")
-        
-        if event_dt is None:
-            logger.warning(f"Error parsing end date for update '{item.get('Project_name')}': {event_date_str}")
-            return
-        
-        # For all-day events, we always use 'date' format
-        time_format = 'date'
-        
-        # Set start date to the End Date
-        start_dt = event_dt
-        
-        # Set end date to End Date + 1 day (exclusive)
-        end_dt = start_dt + timedelta(days=1)
-        
-        # Format dates for Google Calendar API
-        start_time = start_dt.strftime('%Y-%m-%d')
-        end_time = end_dt.strftime('%Y-%m-%d')
-        
-        # Validate that start_time is not empty
-        if not start_time:
-            logger.warning(f"Skipping update for item '{item.get('Project_name')}' - invalid date format")
-            return
-        
-        # Build description
-        description_parts = []
-        if item.get("Customer_Name"):
-            description_parts.append(f"Customer: {item.get('Customer_Name')}")
-        if item.get("Status"):
-            description_parts.append(f"Project Status: {item.get('Status')}")
-        if item.get("Task_Type"):
-            description_parts.append(f"Task Type: {item.get('Task_Type')}")
-        if item.get("Tasks_Tracker"):
-            description_parts.append(f"Tasks Tracker: {item.get('Tasks_Tracker')}")
-        if item.get("Attach_file"):
-            description_parts.append(f"Attachment: {item.get('Attach_file')}")
-        
-        description = "\n".join(description_parts) if description_parts else ""
-        
-        # Update event
-        event['summary'] = item.get("Project_name") or "Untitled Project"
-        event['description'] = description
-        event['start'] = {time_format: start_time}
-        event['end'] = {time_format: end_time}
-        
-        service.events().update(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id, body=event).execute()
-    except HttpError as e:
-        if e.resp.status == 400:
-            logger.error(f"HttpError 400 updating item '{item.get('Project_name', 'Unknown')}': {e.reason}")
-            logger.error(f"  Start time: {start_time}, End time: {end_time}")
-            logger.error(f"  Event data: {event}")
-        else:
-            logger.error(f"HttpError {e.resp.status} updating calendar event: {e.reason}")
-        raise
-    except Exception as e:
-        logger.error(f"Error updating calendar event: {str(e)}", exc_info=True)
-        raise
-
-def delete_calendar_event(service, event_id: str):
-    """Delete a calendar event."""
+def delete_event(service, event_id: str) -> bool:
     try:
         service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
+        return True
     except HttpError as e:
-        if e.resp.status == 404:
-            logger.info(f"Event {event_id} not found, may have been already deleted")
-        else:
-            logger.error(f"HttpError deleting calendar event {event_id}: {str(e)}")
-            raise
+        if getattr(e, "resp", None) and e.resp.status == 404:
+            return True
+        logger.error(f"Delete event failed ({event_id}): {e}", exc_info=True)
+        return False
     except Exception as e:
-        logger.error(f"Error deleting calendar event {event_id}: {str(e)}", exc_info=True)
-        raise
+        logger.error(f"Delete event failed ({event_id}): {e}", exc_info=True)
+        return False
 
-def delete_all_calendar_events(service):
-    """Delete all events from the Google Calendar."""
-    try:
-        # Get all events from the calendar
-        logger.info("Fetching all events from calendar...")
-        events_result = service.events().list(calendarId=GOOGLE_CALENDAR_ID, maxResults=2500).execute()
-        events = events_result.get('items', [])
-        
-        logger.info(f"Found {len(events)} events to delete")
-        
-        # Delete each event
-        deleted_count = 0
-        for event in events:
-            try:
-                event_id = event['id']
-                service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
-                deleted_count += 1
-                if deleted_count % 50 == 0:  # Log progress every 50 deletions
-                    logger.info(f"Deleted {deleted_count} events so far...")
-            except HttpError as e:
-                event_id = event.get('id', 'unknown')
-                if e.resp.status == 404:
-                    # Event already deleted
-                    pass
-                else:
-                    logger.error(f"HttpError deleting event {event_id}: {str(e)}")
-            except Exception as e:
-                event_id = event.get('id', 'unknown')
-                logger.error(f"Error deleting event {event_id}: {str(e)}")
-        
-        logger.info(f"Successfully deleted {deleted_count} events from calendar")
-        return deleted_count
-        
-    except Exception as e:
-        logger.error(f"Error fetching or deleting events: {str(e)}", exc_info=True)
-        raise
+def list_synced_events(service) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    page_token = None
+    while True:
+        resp = service.events().list(calendarId=GOOGLE_CALENDAR_ID, maxResults=2500, pageToken=page_token).execute()
+        for ev in resp.get("items", []):
+            priv = (ev.get("extendedProperties") or {}).get("private") or {}
+            if priv.get(SYNC_MARKER_KEY) == SYNC_MARKER_VAL:
+                events.append(ev)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return events
 
-@app.post("/clear-calendar", tags=["Calendar Management"])
-def clear_calendar():
-    """
-    Delete all events from the Google Calendar.
-    This will remove all events from the specified calendar.
-    """
-    try:
-        logger.info("Starting calendar clear operation...")
-        logger.info("Connecting to Google Calendar API...")
-        
-        # Get Google Calendar service
-        service = get_google_calendar_service()
-        logger.info("Google Calendar API connection established")
-        
-        # Delete all events
-        deleted_count = delete_all_calendar_events(service)
-        
-        # Clear the sync mapping file
-        logger.info("Clearing sync mapping file...")
-        save_sync_mapping({})
-        logger.info("Sync mapping file cleared")
-        
-        result = {
-            "status": "success",
-            "deleted": deleted_count,
-            "message": f"Successfully deleted {deleted_count} events from calendar"
-        }
-        
-        logger.info(f"Calendar clear operation completed! Deleted {deleted_count} events.")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Internal server error during calendar clear: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
+# -------------------------
+# Sync core
+# -------------------------
+def run_sync_internal() -> Dict[str, Any]:
+    logger.info("Starting calendar sync...")
+    service = get_google_calendar_service()
 
-@app.post("/sync-calendar", tags=["Calendar Sync"])
-def sync_calendar():
-    """
-    Sync Notion database with Google Calendar.
-    Creates new events for new projects, updates existing events, and deletes removed projects.
-    """
-    try:
-        logger.info("Starting calendar synchronization...")
-        logger.info("Connecting to Google Calendar API...")
-        
-        # Get Google Calendar service
-        service = get_google_calendar_service()
-        logger.info("Google Calendar API connection established")        
-        # Load existing sync mapping
-        logger.info("Loading sync mapping...")
-        sync_mapping = load_sync_mapping()
-        
-        # Get current Notion data with page IDs
-        logger.info("Fetching data from Notion...")
-        notion_items = get_notion_data_with_ids()
-        logger.info(f"Retrieved {len(notion_items)} items from Notion")        
-        # Track stats
-        created_count = 0
-        updated_count = 0
-        deleted_count = 0
-        skipped_count = 0
-        
-        logger.info("Processing items...")
-        # Process each Notion item
-        for page_id, item in notion_items.items():
-            # Skip items without start date
-            if not item.get("Start_date"):
-                skipped_count += 1
-                continue
-            
-            # Check if this page was already synced
-            if page_id in sync_mapping:
-                # Check if item has changed (compare key fields)
-                existing_item = sync_mapping[page_id]
-                event_id = existing_item.get("event_id")
+    sync_mapping = load_sync_mapping()
+    notion_items = notion_items_with_ids()
+
+    created = updated = deleted = skipped = 0
+
+    for page_id, item in notion_items.items():
+        if not item.get("Start_date") and not item.get("End_date"):
+            skipped += 1
+            continue
+
+        new_hash = stable_item_hash(item)
+
+        if page_id in sync_mapping:
+            old_event_ids = sync_mapping[page_id].get("event_ids", [])
+            # Migrate legacy singular event_id to the list
+            legacy_event_id = sync_mapping[page_id].get("event_id")
+            if legacy_event_id and legacy_event_id not in old_event_ids:
+                old_event_ids.append(legacy_event_id)
+
+            old_hash = sync_mapping[page_id].get("hash")
+
+            if old_hash != new_hash:
+                for eid in old_event_ids:
+                    delete_event(service, eid)
                 
-                # Check if significant fields changed (using a stable hash)
-                hash_fields = (
-                    str(item.get("Project_name", "")),
-                    str(item.get("Start_date", "")),
-                    str(item.get("End_date", "")),
-                    str(item.get("Customer_Name", "")),
-                    str(item.get("Status", "")),
-                    str(item.get("Task_Type", "")),
-                    str(item.get("Tasks_Tracker", ""))
-                )
-                item_hash = hash(hash_fields)
-                
-                if existing_item.get("hash") != item_hash:
-                    # Item changed, update calendar event
-                    try:
-                        update_calendar_event(service, event_id, item)
-                        existing_item["hash"] = item_hash
-                        existing_item.update(item)
-                        updated_count += 1
-                    except Exception as e:
-                        logger.error(f"  Error updating event for page {page_id}: {str(e)}")
+                new_event_ids = create_events_for_item(service, item)
+                if new_event_ids:
+                    sync_mapping[page_id] = {"event_ids": new_event_ids, "hash": new_hash, **item}
+                    updated += 1
                 else:
-                    # No changes
-                    existing_item.update(item)
+                    skipped += 1
             else:
-                # New item, create calendar event
-                try:
-                    event_id = create_calendar_event(service, item, page_id)
-                    if event_id:
-                        hash_fields = (
-                            str(item.get("Project_name", "")),
-                            str(item.get("Start_date", "")),
-                            str(item.get("End_date", "")),
-                            str(item.get("Customer_Name", "")),
-                            str(item.get("Status", "")),
-                            str(item.get("Task_Type", "")),
-                            str(item.get("Tasks_Tracker", ""))
-                        )
-                        sync_mapping[page_id] = {
-                            "event_id": event_id,
-                            "hash": hash(hash_fields),
-                            **item
-                        }
-                        created_count += 1
-                    else:
-                        skipped_count += 1
-                except Exception as e:
-                    logger.error(f"  Error creating event for page {page_id}: {str(e)}")
-        
-        # Find and delete events for items that no longer exist in Notion
-        logger.info("Checking for deleted items...")
-        notion_page_ids = set(notion_items.keys())
-        sync_page_ids = set(sync_mapping.keys())
-        
-        for page_id in sync_page_ids - notion_page_ids:
-            # Item was deleted from Notion
-            try:
-                event_id = sync_mapping[page_id].get("event_id")
-                if event_id:
-                    delete_calendar_event(service, event_id)
-                    deleted_count += 1
-                del sync_mapping[page_id]
-            except Exception as e:
-                logger.error(f"  Error deleting event for removed page {page_id}: {str(e)}")
-        
-        # Save updated sync mapping
-        logger.info("Saving sync mapping...")
-        save_sync_mapping(sync_mapping)
-        logger.info("Sync mapping saved")
-        
-        result = {
-            "status": "success",
-            "created": created_count,
-            "updated": updated_count,
-            "deleted": deleted_count,
-            "skipped": skipped_count,
-            "total_notion_items": len(notion_items),
-            "total_synced": len(sync_mapping)
-        }
-        
-        logger.info("Calendar synchronization completed successfully!")
-        return result
-        
-    except requests.exceptions.HTTPError as http_err:
-        error_detail = f"Notion API error: {http_err}"
-        if hasattr(http_err.response, 'text'):
-            try:
-                error_body = http_err.response.json()
-                error_detail = f"Notion API error: {error_body.get('message', str(http_err))}"
-            except:
-                error_detail = f"Notion API error: {http_err.response.text if hasattr(http_err.response, 'text') else str(http_err)}"
-        logger.error(f"Notion API error: {error_detail}")
-        raise HTTPException(status_code=http_err.response.status_code if hasattr(http_err, 'response') else 500, detail=error_detail)
-    except requests.exceptions.RequestException as req_err:
-        logger.error(f"Failed to connect to Notion API: {str(req_err)}")
-        raise HTTPException(status_code=503, detail=f"Failed to connect to Notion API: {str(req_err)}")
-    except Exception as e:
-        logger.error(f"Internal server error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
+                sync_mapping[page_id] = {"event_ids": old_event_ids, "hash": old_hash, **item}
+        else:
+            new_event_ids = create_events_for_item(service, item)
+            if new_event_ids:
+                sync_mapping[page_id] = {"event_ids": new_event_ids, "hash": new_hash, **item}
+                created += 1
+            else:
+                skipped += 1
 
-@app.get("/auto-sync/start", tags=["Auto Sync"])
-def start_auto_sync():
-    """Start automatic sync"""
+    notion_ids = set(notion_items.keys())
+    mapped_ids = set(sync_mapping.keys())
+    for removed in list(mapped_ids - notion_ids):
+        ev_ids = sync_mapping.get(removed, {}).get("event_ids", [])
+        legacy_ev_id = sync_mapping.get(removed, {}).get("event_id")
+        if legacy_ev_id and legacy_ev_id not in ev_ids:
+            ev_ids.append(legacy_ev_id)
+            
+        for eid in ev_ids:
+            if delete_event(service, eid):
+                deleted += 1
+        sync_mapping.pop(removed, None)
+
+    save_sync_mapping(sync_mapping)
+
+    return {
+        "status": "success",
+        "created": created,
+        "updated": updated,
+        "deleted": deleted,
+        "skipped": skipped,
+        "total_notion_items": len(notion_items),
+        "total_synced": len(sync_mapping),
+    }
+
+# -------------------------
+# Auto sync loop + lifespan
+# -------------------------
+auto_sync_enabled = True
+auto_sync_task_handle: Optional[asyncio.Task] = None
+
+async def auto_sync_loop():
     global auto_sync_enabled
+    await asyncio.sleep(2)
+    logger.info(f"Auto-sync loop started (interval={SYNC_INTERVAL}s)")
+
+    while auto_sync_enabled:
+        try:
+            await asyncio.to_thread(run_sync_internal)
+            logger.info("Auto-sync completed")
+        except Exception as e:
+            logger.error(f"Auto-sync failed: {e}", exc_info=True)
+
+        await asyncio.sleep(SYNC_INTERVAL)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global auto_sync_enabled, auto_sync_task_handle
+
     auto_sync_enabled = True
-    return {"status": "success", "message": "Automatic sync started"}
-
-@app.get("/auto-sync/stop", tags=["Auto Sync"])
-def stop_auto_sync():
-    """Stop automatic sync"""
-    global auto_sync_enabled
+    auto_sync_task_handle = asyncio.create_task(auto_sync_loop())
+    logger.info("Application started. Auto-sync scheduled.")
+    yield
     auto_sync_enabled = False
-    return {"status": "success", "message": "Automatic sync stopped"}
+    if auto_sync_task_handle and not auto_sync_task_handle.done():
+        auto_sync_task_handle.cancel()
 
-@app.get("/auto-sync/status", tags=["Auto Sync"])
-def auto_sync_status():
-    """Get automatic sync status"""
-    global auto_sync_enabled
-    return {"status": "success", "auto_sync_enabled": auto_sync_enabled}
+app = FastAPI(
+    title="Notion → Google Calendar Sync API",
+    version="3.0.0",
+    lifespan=lifespan,
+)
 
-@app.get("/logs/latest", tags=["Logs"])
-def get_latest_logs():
-    """Get the latest log entries"""
-    try:
-        with open("sync.log", "r") as f:
-            lines = f.readlines()
-            # Return the last 20 lines
-            return {"status": "success", "logs": lines[-20:] if len(lines) > 20 else lines}
-    except FileNotFoundError:
-        return {"status": "error", "message": "Log file not found"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+# -------------------------
+# Endpoints
+# -------------------------
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "notion-api"}
+    return {"status": "healthy"}
 
-# Only used if running directly (e.g., `python main.py`)
+@app.get("/get-data", response_model=NotionResponse, tags=["Notion"])
+def get_data():
+    items = notion_items_with_ids()
+    results = list(items.values())
+    results.sort(key=lambda x: (x.get("Project_name", "").lower(), x.get("Start_date") or ""))
+    return {"data": results}
+
+@app.post("/sync-calendar", tags=["Calendar Sync"])
+def sync_calendar(_: Any = Depends(require_api_key)):
+    return run_sync_internal()
+
+@app.post("/clear-calendar", tags=["Calendar Management"])
+def clear_calendar(_: Any = Depends(require_api_key)):
+    service = get_google_calendar_service()
+    synced = list_synced_events(service)
+    deleted_count = 0
+    for ev in synced:
+        ev_id = ev.get("id")
+        if ev_id and delete_event(service, ev_id):
+            deleted_count += 1
+    save_sync_mapping({})
+    return {"status": "success", "deleted": deleted_count}
+
+@app.get("/auto-sync/status", tags=["Auto Sync"])
+def auto_sync_status():
+    return {
+        "auto_sync_enabled": auto_sync_enabled,
+        "interval_seconds": SYNC_INTERVAL,
+        "task_running": bool(auto_sync_task_handle and not auto_sync_task_handle.done()),
+    }
+
+@app.get("/auto-sync/stop", tags=["Auto Sync"])
+def stop_auto_sync(_: Any = Depends(require_api_key)):
+    global auto_sync_enabled, auto_sync_task_handle
+    auto_sync_enabled = False
+    if auto_sync_task_handle and not auto_sync_task_handle.done():
+        auto_sync_task_handle.cancel()
+    return {"status": "success", "message": "Auto-sync stopped"}
+
+@app.get("/auto-sync/start", tags=["Auto Sync"])
+def start_auto_sync(_: Any = Depends(require_api_key)):
+    global auto_sync_enabled, auto_sync_task_handle
+    auto_sync_enabled = True
+    if not auto_sync_task_handle or auto_sync_task_handle.done():
+        auto_sync_task_handle = asyncio.create_task(auto_sync_loop())
+    return {"status": "success", "message": "Auto-sync started"}
+
+@app.get("/logs/latest", tags=["Logs"])
+def get_latest_logs():
+    try:
+        with open("sync.log", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return {"status": "success", "logs": lines[-50:] if len(lines) > 50 else lines}
+    except FileNotFoundError:
+        return {"status": "error", "message": "Log file not found"}
+
+# -------------------------
+# Run directly
+# -------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
