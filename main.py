@@ -288,6 +288,7 @@ STATUS_COLORS = {
     "Discussion with Dev Team Required": "3", # Purple (Grape)
     "Costing": "3",                           # Purple (Grape)
     "Pending Client Approval": "4",           # Pink (Flamingo)
+    "Marketing": "4",                         # Pink (Flamingo)
     "Development": "8",                       # Grey
     "UAT Client Approval Pending": "6",       # Orange (Tangerine)
     "Hold": "8",                              # Brown/Grey
