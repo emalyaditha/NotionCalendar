@@ -47,8 +47,6 @@ if not DATABASE_ID:
     raise ValueError("DATABASE_ID environment variable is required")
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-
-SYNC_MAPPING_FILE = "sync_mapping.json"
 ERROR_LOG_FILE = "error.log"
 
 # -------------------------
@@ -104,32 +102,22 @@ class NotionItem(BaseModel):
     Status: Optional[str] = None
     Task_Type: Optional[str] = None
     Tasks_Tracker: Optional[str] = ""
+    Sync_Hash: Optional[str] = None
+    Sync_Event_IDs: Optional[str] = None
 
 class NotionResponse(BaseModel):
     data: List[NotionItem]
 
 # -------------------------
-# Mapping helpers
+# Mapping helpers (REMOVED: Now using Notion properties)
 # -------------------------
-def load_sync_mapping() -> Dict[str, Any]:
-    if os.path.exists(SYNC_MAPPING_FILE):
-        try:
-            with open(SYNC_MAPPING_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_sync_mapping(mapping: Dict[str, Any]):
-    with open(SYNC_MAPPING_FILE, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=2, ensure_ascii=False)
 
 def stable_item_hash(item: Dict[str, Any]) -> str:
-    # We add a version marker here to force a re-sync of all items
-    # whenever we change the core sync logic (like switching to "End Date Only").
-    item_with_version = item.copy()
-    item_with_version["_sync_version"] = "2.0.1" 
-    payload = json.dumps(item_with_version, sort_keys=True, ensure_ascii=False)
+    # We exclude the sync metadata from the hash calculation
+    # to avoid infinite update loops.
+    item_copy = {k: v for k, v in item.items() if k not in ["Sync_Hash", "Sync_Event_IDs"]}
+    item_copy["_sync_version"] = "2.0.1" 
+    payload = json.dumps(item_copy, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 # -------------------------
@@ -200,6 +188,11 @@ def get_files(prop: Dict[str, Any]) -> Optional[str]:
 # -------------------------
 # Notion query (CORRECT ENDPOINT)
 # -------------------------
+# -------------------------
+# Notion Client (Shared)
+# -------------------------
+notion_client = httpx.AsyncClient(timeout=60.0)
+
 async def notion_query_all_pages() -> List[Dict[str, Any]]:
     """
     Fetch ALL rows from database using:
@@ -214,19 +207,18 @@ async def notion_query_all_pages() -> List[Dict[str, Any]]:
     all_results: List[Dict[str, Any]] = []
     payload: Dict[str, Any] = {"page_size": 100}
 
-    async with httpx.AsyncClient() as client:
-        while True:
-            resp = await client.post(url, headers=notion_headers(), json=payload, timeout=60.0)
-            if not resp.is_success:
-                raise HTTPException(status_code=resp.status_code, detail=f"Notion query failed: {resp.text}")
+    while True:
+        resp = await notion_client.post(url, headers=notion_headers(), json=payload)
+        if not resp.is_success:
+            raise HTTPException(status_code=resp.status_code, detail=f"Notion query failed: {resp.text}")
 
-            data = resp.json()
-            all_results.extend(data.get("results", []))
+        data = resp.json()
+        all_results.extend(data.get("results", []))
 
-            if not data.get("has_more"):
-                break
+        if not data.get("has_more"):
+            break
 
-            payload["start_cursor"] = data.get("next_cursor")
+        payload["start_cursor"] = data.get("next_cursor")
 
     return all_results
 
@@ -250,10 +242,27 @@ async def notion_items_with_ids() -> Dict[str, Dict[str, Any]]:
             "Status": get_select(props.get("Status", {})),
             "Task_Type": get_select(props.get("Task Type", {})),
             "Tasks_Tracker": get_rich_text(props.get("Tasks Tracker", {})) or get_rich_text(props.get("Description", {})),
+            "Sync_Hash": get_rich_text(props.get("Sync_Hash", {})),
+            "Sync_Event_IDs": get_rich_text(props.get("Sync_Event_IDs", {})),
         }
         out[page_id] = item
 
     return out
+
+async def patch_notion_page(page_id: str, properties: Dict[str, Any]):
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    resp = await notion_client.patch(url, headers=notion_headers(), json={"properties": properties})
+    if not resp.is_success:
+        logger.error(f"Failed to patch Notion page {page_id}: {resp.text}")
+        return False
+    return True
+
+async def update_notion_sync_data(page_id: str, hash_val: str, event_ids: List[str]):
+    props = {
+        "Sync_Hash": {"rich_text": [{"text": {"content": hash_val}}]},
+        "Sync_Event_IDs": {"rich_text": [{"text": {"content": ",".join(event_ids)}}]},
+    }
+    return await patch_notion_page(page_id, props)
 
 # -------------------------
 # Google Calendar
@@ -325,7 +334,7 @@ def build_event_description(item: Dict[str, Any]) -> str:
         parts.append(f"Attachment: {item['Attach_file']}")
     return "\n".join(parts)
 
-def create_events_for_item(service, item: Dict[str, Any]) -> List[str]:
+def create_events_for_item(service, item: Dict[str, Any], page_id: str) -> List[str]:
     # Use End_date if available, otherwise Start_date
     target_dt_str = item.get("End_date") or item.get("Start_date")
     target_dt = parse_notion_date(target_dt_str)
@@ -342,7 +351,12 @@ def create_events_for_item(service, item: Dict[str, Any]) -> List[str]:
         "start": {"date": target_dt.strftime("%Y-%m-%d")},
         "end": {"date": (target_dt + timedelta(days=1)).strftime("%Y-%m-%d")},
         "colorId": STATUS_COLORS.get(item.get("Status"), "1"),
-        "extendedProperties": {"private": {SYNC_MARKER_KEY: SYNC_MARKER_VAL}},
+        "extendedProperties": {
+            "private": {
+                SYNC_MARKER_KEY: SYNC_MARKER_VAL,
+                "notion_page_id": page_id
+            }
+        },
     }
     
     try:
@@ -350,144 +364,130 @@ def create_events_for_item(service, item: Dict[str, Any]) -> List[str]:
         if created and created.get("id"):
             return [created.get("id")]
     except Exception as e:
-        logger.error(f"Create event failed: {e}", exc_info=True)
+        logger.error(f"Event creation failed for {summary}: {e}")
             
     return []
 
-def delete_event(service, event_id: str) -> bool:
+# -------------------------
+# Google Calendar Operations (Thread-Safe)
+# -------------------------
+def delete_event_threadsafe(event_id: str) -> bool:
     try:
+        # Each thread gets its own service instance to be thread-safe
+        service = get_google_calendar_service()
         service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
         return True
     except HttpError as e:
-        if getattr(e, "resp", None) and e.resp.status == 404:
-            return True
-        logger.error(f"Delete event failed ({event_id}): {e}", exc_info=True)
+        if e.resp.status == 404:
+            return True # Already deleted
+        logger.error(f"Delete event failed ({event_id}): {e}")
         return False
     except Exception as e:
-        logger.error(f"Delete event failed ({event_id}): {e}", exc_info=True)
+        logger.error(f"Delete event failed ({event_id}): {e}")
         return False
 
-def list_synced_events(service) -> List[Dict[str, Any]]:
-    events: List[Dict[str, Any]] = []
-    page_token = None
-    while True:
-        resp = service.events().list(calendarId=GOOGLE_CALENDAR_ID, maxResults=2500, pageToken=page_token).execute()
-        for ev in resp.get("items", []):
-            priv = (ev.get("extendedProperties") or {}).get("private") or {}
-            if priv.get(SYNC_MARKER_KEY) == SYNC_MARKER_VAL:
-                events.append(ev)
-        page_token = resp.get("nextPageToken")
-        if not page_token:
-            break
-    return events
+def create_event_threadsafe(item: Dict[str, Any], page_id: str) -> List[str]:
+    try:
+        service = get_google_calendar_service()
+        return create_events_for_item(service, item, page_id)
+    except Exception as e:
+        logger.critical(f"Create event CRITICAL failed for {page_id}: {e}", exc_info=True)
+        return []
+
+def list_synced_events_threadsafe() -> List[Dict[str, Any]]:
+    try:
+        service = get_google_calendar_service()
+        events: List[Dict[str, Any]] = []
+        page_token = None
+        while True:
+            resp = service.events().list(calendarId=GOOGLE_CALENDAR_ID, maxResults=2500, pageToken=page_token).execute()
+            for ev in resp.get("items", []):
+                priv = (ev.get("extendedProperties") or {}).get("private") or {}
+                if priv.get(SYNC_MARKER_KEY) == SYNC_MARKER_VAL:
+                    events.append(ev)
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return events
+    except Exception as e:
+        logger.error(f"List synced events failed: {e}")
+        return []
 
 # -------------------------
-# Sync core
+# Core Sync Engine
 # -------------------------
-def run_sync_internal() -> Dict[str, Any]:
-    logger.info("Starting calendar sync...")
-    service = get_google_calendar_service()
-
-    sync_mapping = load_sync_mapping()
-    notion_items = notion_items_with_ids()
-
-    created = updated = deleted = skipped = 0
-
-    for page_id, item in notion_items.items():
-        if not item.get("Start_date") and not item.get("End_date"):
-            skipped += 1
-            continue
-
-        new_hash = stable_item_hash(item)
-
-async def process_single_item(service, page_id, item, sync_mapping, stats):
+async def process_single_item(page_id: str, item: Dict[str, Any], stats: Dict[str, int]):
     new_hash = stable_item_hash(item)
     
-    # Use to_thread for blocking Google API calls
-    if page_id in sync_mapping:
-        old_event_ids = sync_mapping[page_id].get("event_ids", [])
-        legacy_event_id = sync_mapping[page_id].get("event_id")
-        if legacy_event_id and legacy_event_id not in old_event_ids:
-            old_event_ids.append(legacy_event_id)
+    old_hash = item.get("Sync_Hash")
+    old_event_ids_str = item.get("Sync_Event_IDs") or ""
+    old_event_ids = [eid.strip() for eid in old_event_ids_str.split(",") if eid.strip()]
 
-        old_hash = sync_mapping[page_id].get("hash")
+    # If hash matches, skip to save time and API quota
+    if old_hash == new_hash:
+        stats["skipped"] += 1
+        return
 
-        if old_hash != new_hash:
-            # Delete old events concurrently
-            delete_tasks = [asyncio.to_thread(delete_event, service, eid) for eid in old_event_ids]
-            await asyncio.gather(*delete_tasks)
-            
-            # Create new event
-            new_event_ids = await asyncio.to_thread(create_events_for_item, service, item)
-            if new_event_ids:
-                sync_mapping[page_id] = {"event_ids": new_event_ids, "hash": new_hash, **item}
+    # Delete old events concurrently
+    if old_event_ids:
+        delete_tasks = [asyncio.to_thread(delete_event_threadsafe, eid) for eid in old_event_ids]
+        await asyncio.gather(*delete_tasks)
+    
+    # Create new event (each thread build its own service instance)
+    new_event_ids = await asyncio.to_thread(create_event_threadsafe, item, page_id)
+    if new_event_ids:
+        # Critical Step: Update Notion with new sync data
+        success = await update_notion_sync_data(page_id, new_hash, new_event_ids)
+        if success:
+            if old_hash:
                 stats["updated"] += 1
             else:
-                stats["skipped"] += 1
+                stats["created"] += 1
         else:
-            sync_mapping[page_id] = {"event_ids": old_event_ids, "hash": old_hash, **item}
+            logger.error(f"Sync logic error: Event created but Notion update FAILED for {page_id}. This will cause a duplicate on next run!")
+            # We don't rollback GCal here to avoid accidental deletion, 
+            # but we log it as a critical error.
     else:
-        new_event_ids = await asyncio.to_thread(create_events_for_item, service, item)
-        if new_event_ids:
-            sync_mapping[page_id] = {"event_ids": new_event_ids, "hash": new_hash, **item}
-            stats["created"] += 1
-        else:
-            stats["skipped"] += 1
+        stats.setdefault("failed", 0)
+        stats["failed"] += 1
 
 async def run_sync_internal() -> Dict[str, Any]:
-    logger.info("Starting calendar sync...")
-    service = await asyncio.to_thread(get_google_calendar_service)
-
-    sync_mapping = load_sync_mapping()
-    notion_items = await notion_items_with_ids()
-
-    stats = {"created": 0, "updated": 0, "deleted": 0, "skipped": 0}
+    logger.info("Starting calendar sync (Notion-based storage)...")
     
-    # Process active items in parallel (limit concurrency to 10)
+    notion_items = await notion_items_with_ids()
+    stats = {"created": 0, "updated": 0, "deleted": 0, "skipped": 0, "failed": 0}
+    
+    if not notion_items:
+        logger.info("No Notion items found to sync.")
+        return stats
+
+    # Process items in parallel (limit concurrency to 10 to protect GCal API)
+    # Semaphore prevents flooding Google with too many simultaneous connections
     semaphore = asyncio.Semaphore(10)
     async def sem_process(pid, itm):
         async with semaphore:
-            await process_single_item(service, pid, itm, sync_mapping, stats)
+            await process_single_item(pid, itm, stats)
 
-    active_tasks = [sem_process(pid, itm) for pid, itm in notion_items.items() 
-                    if itm.get("Start_date") or itm.get("End_date")]
+    # Only process items that have at least one valid date
+    active_items = {pid: itm for pid, itm in notion_items.items() 
+                    if itm.get("Start_date") or itm.get("End_date")}
     
-    # Count skipped items that have no dates
-    stats["skipped"] += len(notion_items) - len(active_tasks)
+    stats["skipped"] += len(notion_items) - len(active_items)
     
-    if active_tasks:
-        await asyncio.gather(*active_tasks)
+    if active_items:
+        tasks = [sem_process(pid, itm) for pid, itm in active_items.items()]
+        await asyncio.gather(*tasks)
 
-    # Handle removals
-    notion_ids = set(notion_items.keys())
-    mapped_ids = set(sync_mapping.keys())
-    removed_ids = list(mapped_ids - notion_ids)
+    logger.info(f"Sync completed. Created: {stats['created']}, Updated: {stats['updated']}, Skipped: {stats['skipped']}, Failed: {stats['failed']}")
     
-    if removed_ids:
-        async def remove_item(removed_id):
-            async with semaphore:
-                ev_ids = sync_mapping.get(removed_id, {}).get("event_ids", [])
-                legacy_ev_id = sync_mapping.get(removed_id, {}).get("event_id")
-                if legacy_ev_id and legacy_ev_id not in ev_ids:
-                    ev_ids.append(legacy_ev_id)
-                    
-                delete_tasks = [asyncio.to_thread(delete_event, service, eid) for eid in ev_ids]
-                results = await asyncio.gather(*delete_tasks)
-                stats["deleted"] += sum(1 for r in results if r)
-                sync_mapping.pop(removed_id, None)
-
-        await asyncio.gather(*[remove_item(rid) for rid in removed_ids])
-
-    save_sync_mapping(sync_mapping)
-
     return {
         "status": "success",
         "created": stats["created"],
         "updated": stats["updated"],
         "deleted": stats["deleted"],
         "skipped": stats["skipped"],
+        "failed": stats["failed"],
         "total_notion_items": len(notion_items),
-        "total_synced": len(sync_mapping),
     }
 
 # -------------------------
@@ -552,24 +552,31 @@ async def sync_calendar(_: Any = Depends(require_api_key)):
 
 @app.post("/clear-calendar", tags=["Calendar Management"])
 async def clear_calendar(_: Any = Depends(require_api_key)):
-    service = await asyncio.to_thread(get_google_calendar_service)
-    synced = await asyncio.to_thread(list_synced_events, service)
+    synced = await asyncio.to_thread(list_synced_events_threadsafe)
     
     if not synced:
-        return {"status": "success", "deleted": 0}
-
-    # Parallelize deletion
-    delete_tasks = []
-    for ev in synced:
-        ev_id = ev.get("id")
-        if ev_id:
-            delete_tasks.append(asyncio.to_thread(delete_event, service, ev_id))
+        deleted_count = 0
+    else:
+        # Parallelize deletion
+        delete_tasks = [asyncio.to_thread(delete_event_threadsafe, ev.get("id")) 
+                        for ev in synced if ev.get("id")]
+        results = await asyncio.gather(*delete_tasks)
+        deleted_count = sum(1 for r in results if r)
     
-    results = await asyncio.gather(*delete_tasks)
-    deleted_count = sum(1 for r in results if r)
+    # Also clear Notion properties for ALL items to force a full re-sync
+    notion_items = await notion_items_with_ids()
+    clear_tasks = []
+    semaphore = asyncio.Semaphore(10)
+    async def sem_clear(pid):
+        async with semaphore:
+            await update_notion_sync_data(pid, "", [])
     
-    save_sync_mapping({})
-    return {"status": "success", "deleted": deleted_count}
+    for pid in notion_items.keys():
+        clear_tasks.append(sem_clear(pid))
+    
+    await asyncio.gather(*clear_tasks)
+    
+    return {"status": "success", "deleted": deleted_count, "notion_cleared": len(clear_tasks)}
 
 @app.get("/auto-sync/status", tags=["Auto Sync"])
 def auto_sync_status():
